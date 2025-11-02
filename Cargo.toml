@@ -1,0 +1,10 @@
+[workspace]
+
+resolver = "3"
+members = [
+    "packages/synclite_cli",
+    "packages/synclite_core",
+    "packages/synclite_sync",
+    "packages/synclite_fs",
+    "packages/synclite_network",
+]

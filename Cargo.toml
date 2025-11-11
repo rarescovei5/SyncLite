@@ -1,10 +1,7 @@
-[workspace]
+[package]
+name = "synclite"
+version = "0.1.0"
+edition = "2024"
 
-resolver = "3"
-members = [
-    "packages/synclite_cli",
-    "packages/synclite_core",
-    "packages/synclite_sync",
-    "packages/synclite_fs",
-    "packages/synclite_network",
-]
+[dependencies]
+tokio = { version = "1.39.0", features = ["full"] }

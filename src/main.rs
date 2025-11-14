@@ -1,9 +1,7 @@
-use synclite::cli::{
-    self,
-    output::CliOutput,
-    types::{Command, ParseErrorCode},
-};
+use synclite::cli::{self, types::ParseErrorCode};
 use synclite::storage::initialise_storage;
+use synclite::sync::initialise_state;
+use synclite::utils::output::CliOutput;
 
 #[tokio::main]
 async fn main() {
@@ -25,23 +23,10 @@ async fn main() {
     };
 
     CliOutput::info(
-        &format!("Starting {} mode for: {}", args.command, args.path),
+        &format!("Starting {} mode for: {}\n", args.command, args.path),
         None,
     );
 
-    let result = match args.command {
-        Command::Serve => {
-            CliOutput::initializing(&args.path);
-            initialise_storage(&args.path, args.port)
-        }
-        Command::Connect => {
-            CliOutput::info("Connect mode not yet implemented", None);
-            Ok(())
-        }
-    };
-
-    if let Err(e) = result {
-        CliOutput::error(&format!("{}", e), None);
-        std::process::exit(1);
-    }
+    initialise_storage(&args.path);
+    initialise_state(&args.path);
 }

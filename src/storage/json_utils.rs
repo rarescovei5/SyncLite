@@ -1,4 +1,4 @@
-use super::types::{PeersConfig, SyncState, WorkspaceConfig};
+use super::types::{PeersConfig, SyncState};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -16,16 +16,6 @@ pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String>
 
     serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse JSON from {}: {}", path.display(), e))
-}
-
-/// Helpers for workspace file
-pub fn write_workspace_config(storage_dir: &Path, config: &WorkspaceConfig) -> Result<(), String> {
-    let workspace_file = storage_dir.join("workspace.json");
-    write_json(&workspace_file, config)
-}
-pub fn read_workspace_config(storage_dir: &Path) -> Result<WorkspaceConfig, String> {
-    let workspace_file = storage_dir.join("workspace.json");
-    read_json(&workspace_file)
 }
 
 /// Helpers for peers file

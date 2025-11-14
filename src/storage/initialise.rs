@@ -1,6 +1,6 @@
 use super::{
     json_utils,
-    types::{PeersConfig, WorkspaceConfig},
+    types::{PeersConfig, SyncState, WorkspaceConfig},
 };
 use crate::cli::output::CliOutput;
 use crate::utils::confirm;
@@ -20,8 +20,7 @@ pub fn initialise_storage(path: &str, port: u16) -> Result<(), Box<dyn std::erro
     // Check if the directory is already initialized
     let storage_dir = base_path.join(".synclite");
     if storage_dir.exists() {
-        CliOutput::success("Directory is already initialized", None);
-        CliOutput::info(&format!("Server will start on port {}", port), None);
+        CliOutput::success("Directory is initialized", None);
         return Ok(());
     }
 
@@ -51,7 +50,7 @@ pub fn initialise_storage(path: &str, port: u16) -> Result<(), Box<dyn std::erro
     json_utils::write_workspace_config(&storage_dir, &WorkspaceConfig::new())?;
     CliOutput::info(
         &format!(
-            "Created directory: {}",
+            "Created file: {}",
             storage_dir.join("workspace.json").display()
         ),
         Some(5),
@@ -60,10 +59,14 @@ pub fn initialise_storage(path: &str, port: u16) -> Result<(), Box<dyn std::erro
     // Create the peers file
     json_utils::write_peers_config(&storage_dir, &PeersConfig::new())?;
     CliOutput::info(
-        &format!(
-            "Created directory: {}",
-            storage_dir.join("peers.json").display()
-        ),
+        &format!("Created file: {}", storage_dir.join("peers.json").display()),
+        Some(5),
+    );
+
+    // Create the state file
+    json_utils::write_sync_state(&storage_dir, &SyncState::new())?;
+    CliOutput::info(
+        &format!("Created file: {}", storage_dir.join("state.json").display()),
         Some(5),
     );
 

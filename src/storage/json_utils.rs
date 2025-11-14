@@ -1,4 +1,4 @@
-use super::types::{PeersConfig, WorkspaceConfig};
+use super::types::{PeersConfig, SyncState, WorkspaceConfig};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -36,4 +36,14 @@ pub fn write_peers_config(storage_dir: &Path, config: &PeersConfig) -> Result<()
 pub fn read_peers_config(storage_dir: &Path) -> Result<PeersConfig, String> {
     let peers_file = storage_dir.join("peers.json");
     read_json(&peers_file)
+}
+
+/// Helpers for sync state file
+pub fn write_sync_state(storage_dir: &Path, state: &SyncState) -> Result<(), String> {
+    let state_file = storage_dir.join("state.json");
+    write_json(&state_file, state)
+}
+pub fn read_sync_state(storage_dir: &Path) -> Result<SyncState, String> {
+    let state_file = storage_dir.join("state.json");
+    read_json(&state_file)
 }

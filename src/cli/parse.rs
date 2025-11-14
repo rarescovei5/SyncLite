@@ -1,34 +1,4 @@
-// Base Types
-#[derive(Debug)]
-pub enum Command {
-    Serve,
-    Connect,
-}
-#[derive(Debug)]
-pub struct Args {
-    pub command: Command,
-    pub path: String,
-    pub port: u16,
-}
-
-// Utility Types
-pub enum FlagType {
-    Port,
-}
-
-// Error Types
-pub enum ParseErrorCode {
-    NoCommand,
-    NoPath,
-    UnknownCommand,
-    InvalidPath,
-    InvalidFlag,
-    InvalidPort,
-}
-pub struct ParseError {
-    pub message: String,
-    pub code: ParseErrorCode,
-}
+use crate::cli::types::{Args, Command, FlagType, ParseError, ParseErrorCode};
 
 // Parse Function
 pub fn parse_args() -> Result<Args, ParseError> {
@@ -41,13 +11,13 @@ pub fn parse_args() -> Result<Args, ParseError> {
         Some("connect") => Command::Connect,
         Some(other) => {
             return Err(ParseError {
-                message: format!("❌ Invalid command: {}", other),
+                message: format!("Invalid command: '{}'", other),
                 code: ParseErrorCode::UnknownCommand,
             });
         }
         None => {
             return Err(ParseError {
-                message: "❌ No command provided".to_string(),
+                message: "No command provided".to_string(),
                 code: ParseErrorCode::NoCommand,
             });
         }
@@ -58,14 +28,14 @@ pub fn parse_args() -> Result<Args, ParseError> {
         Some(path) => path,
         None => {
             return Err(ParseError {
-                message: "❌ No path provided".to_string(),
+                message: "No path provided".to_string(),
                 code: ParseErrorCode::NoPath,
             });
         }
     };
     if !std::path::Path::new(&path).is_dir() {
         return Err(ParseError {
-            message: format!("❌ Path is not a directory: {}", path),
+            message: format!("Path is not a directory: '{}'", path),
             code: ParseErrorCode::InvalidPath,
         });
     }
@@ -82,7 +52,7 @@ pub fn parse_args() -> Result<Args, ParseError> {
                     Ok(port) => port,
                     Err(_) => {
                         return Err(ParseError {
-                            message: format!("❌ Invalid port: {}", arg),
+                            message: format!("Invalid port number: '{}'", arg),
                             code: ParseErrorCode::InvalidPort,
                         });
                     }
@@ -99,7 +69,7 @@ pub fn parse_args() -> Result<Args, ParseError> {
             }
             _ => {
                 return Err(ParseError {
-                    message: format!("❌ Invalid flag: {}", arg),
+                    message: format!("Unknown flag: '{}'", arg),
                     code: ParseErrorCode::InvalidFlag,
                 });
             }

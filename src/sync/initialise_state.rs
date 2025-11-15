@@ -1,6 +1,6 @@
 use crate::models::SyncState;
 use crate::storage::{read_sync_state, write_sync_state};
-use crate::utils::handle_result_or_exit;
+use crate::utils::{handle_result_or_exit, output::CliOutput};
 use std::path::Path;
 
 pub fn initialise_state(path: &str) {
@@ -62,4 +62,6 @@ pub fn initialise_state(path: &str) {
     }
 
     handle_result_or_exit(write_sync_state(&storage_dir, &result_sync_state));
+
+    CliOutput::success("Successfully computed hashes for all files", None);
 }

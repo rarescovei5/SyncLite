@@ -1,3 +1,4 @@
+use chrono::Utc;
 use colored::*;
 
 /// CLI output utilities with consistent styling
@@ -71,6 +72,23 @@ impl CliOutput {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
         println!("{}✅ {}", pad, message.bright_green());
+    }
+
+    pub fn log(message: &str, padding_left: Option<usize>) {
+        let pad = " ".repeat(padding_left.unwrap_or(0));
+
+        println!(
+            "{}[{}]: {}",
+            pad,
+            Utc::now().time().to_string().bright_black().bold(),
+            message.bright_blue()
+        );
+    }
+
+    pub fn wrench(message: &str, padding_left: Option<usize>) {
+        let pad = " ".repeat(padding_left.unwrap_or(0));
+
+        println!("{}🔧 {}", pad, message.bright_yellow().bold());
     }
 
     pub fn error(message: &str, padding_left: Option<usize>) {

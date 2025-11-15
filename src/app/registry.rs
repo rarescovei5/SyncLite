@@ -17,6 +17,12 @@ impl DirectoriesRegistry {
     }
 }
 
+impl Default for DirectoriesRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Get the path to the synclite app data directory
 pub fn get_app_data_dir() -> Result<PathBuf, String> {
     dirs::data_dir()
@@ -134,3 +140,4 @@ pub fn cleanup_registry() -> Result<(), String> {
 
     Ok(())
 }
+

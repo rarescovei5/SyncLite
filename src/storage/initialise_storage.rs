@@ -1,7 +1,6 @@
-use super::{
-    json_utils, registry,
-    types::{PeersConfig, SyncState},
-};
+use crate::app;
+use crate::models::{PeersConfig, SyncState};
+use crate::storage::json_utils;
 use crate::utils::handle_result_or_exit;
 use crate::utils::{confirm, output::CliOutput};
 use std::{fs, path::Path};
@@ -57,10 +56,10 @@ fn validate_path(path: &str) -> Result<(), String> {
 /// Check for conflicts with existing synclite directories and cleanup registry
 fn check_conflicts_and_cleanup(path: &str) -> Result<(), String> {
     // Clean up the registry first (remove stale entries)
-    registry::cleanup_registry().map_err(|e| format!("Failed to cleanup registry: {}", e))?;
+    app::cleanup_registry().map_err(|e| format!("Failed to cleanup registry: {}", e))?;
 
     // Check for conflicts with existing synclite directories using the registry
-    let (has_conflict, conflicting_dir) = registry::check_path_conflicts(path)
+    let (has_conflict, conflicting_dir) = app::check_path_conflicts(path)
         .map_err(|e| format!("Failed to check path conflicts: {}", e))?;
 
     if has_conflict {
@@ -143,7 +142,7 @@ fn initialize_config_files(storage_dir: &Path) -> Result<(), String> {
 
 /// Register the directory in the global registry
 fn register_directory(path: &str) -> Result<(), String> {
-    registry::add_directory(path).map_err(|e| format!("Failed to add directory to registry: {}", e))
+    app::add_directory(path).map_err(|e| format!("Failed to add directory to registry: {}", e))
 }
 
 #[cfg(windows)]

@@ -10,14 +10,24 @@ use sha2::{Digest, Sha256};
 pub struct FileEntry {
     pub hash: Option<String>, // None if file is deleted
     pub is_deleted: bool,     // Tombstone marker
+    pub clock: u64,
 }
 
 impl FileEntry {
     /// Create a new file entry for an existing file
-    pub fn new_file(hash: String) -> Self {
+    pub fn new(hash: String) -> Self {
         Self {
             hash: Some(hash),
             is_deleted: false,
+            clock: 0,
+        }
+    }
+
+    pub fn new_deleted() -> Self {
+        Self {
+            hash: None,
+            is_deleted: true,
+            clock: 0,
         }
     }
 
@@ -60,6 +70,12 @@ impl SyncState {
     }
 }
 
+impl Default for SyncState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Recursively scan a directory and populate the files HashMap
 fn scan_directory_recursive(
     current_path: &Path,
@@ -93,7 +109,7 @@ fn scan_directory_recursive(
             // Calculate file hash
             match calculate_file_hash(&entry_path) {
                 Ok(hash) => {
-                    files.insert(relative_path, FileEntry::new_file(hash));
+                    files.insert(relative_path, FileEntry::new(hash));
                 }
                 Err(e) => {
                     // Log warning but continue processing other files

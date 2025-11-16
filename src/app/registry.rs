@@ -43,10 +43,19 @@ pub fn load_registry() -> Result<DirectoriesRegistry, String> {
         return Ok(DirectoriesRegistry::new());
     }
 
-    let content = fs::read_to_string(&registry_path)
-        .map_err(|e| format!("Failed to read registry file: {}", e))?;
+    let content = fs::read_to_string(&registry_path).map_err(|e| {
+        format!(
+            "Failed to read existing synclite directories from registry file: {}",
+            e
+        )
+    })?;
 
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse registry JSON: {}", e))
+    serde_json::from_str(&content).map_err(|e| {
+        format!(
+            "Failed to parse synclite directories from registry JSON: {}",
+            e
+        )
+    })
 }
 
 /// Save the directories registry to app data
@@ -55,21 +64,25 @@ pub fn save_registry(registry: &DirectoriesRegistry) -> Result<(), String> {
 
     // Ensure the app data directory exists
     fs::create_dir_all(&app_data_dir)
-        .map_err(|e| format!("Failed to create app data directory: {}", e))?;
+        .map_err(|e| format!("Failed to create synclite directories registry file: {}", e))?;
 
     let registry_path = get_registry_path()?;
-    let json_string = serde_json::to_string_pretty(registry)
-        .map_err(|e| format!("Failed to serialize registry: {}", e))?;
+    let json_string = serde_json::to_string_pretty(registry).map_err(|e| {
+        format!(
+            "Failed to serialize synclite directories to registry JSON: {}",
+            e
+        )
+    })?;
 
     fs::write(&registry_path, json_string)
-        .map_err(|e| format!("Failed to write registry file: {}", e))
+        .map_err(|e| format!("Failed to write synclite directories registry file: {}", e))
 }
 
 /// Add a directory to the registry
-pub fn add_directory(path: &str) -> Result<(), String> {
-    let canonical_path = Path::new(path)
+pub fn add_directory(path: &Path) -> Result<(), String> {
+    let canonical_path = path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path: {}", e))?
+        .map_err(|e| format!("Failed to canonicalize synclite directory path: {}", e))?
         .to_string_lossy()
         .to_string();
 
@@ -85,10 +98,10 @@ pub fn add_directory(path: &str) -> Result<(), String> {
 }
 
 /// Remove a directory from the registry
-pub fn remove_directory(path: &str) -> Result<(), String> {
-    let canonical_path = Path::new(path)
+pub fn remove_directory(path: &Path) -> Result<(), String> {
+    let canonical_path = path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path: {}", e))?
+        .map_err(|e| format!("Failed to canonicalize synclite directory path: {}", e))?
         .to_string_lossy()
         .to_string();
 
@@ -101,10 +114,10 @@ pub fn remove_directory(path: &str) -> Result<(), String> {
 
 /// Check if a path conflicts with existing synclite directories
 /// Returns (is_conflict, conflicting_directory_path)
-pub fn check_path_conflicts(path: &str) -> Result<(bool, Option<String>), String> {
-    let canonical_path = Path::new(path)
+pub fn check_path_conflicts(path: &Path) -> Result<(bool, Option<String>), String> {
+    let canonical_path = path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
+        .map_err(|e| format!("Failed to canonicalize synclite directory path: {}", e))?;
 
     let registry = load_registry()?;
 
@@ -140,4 +153,3 @@ pub fn cleanup_registry() -> Result<(), String> {
 
     Ok(())
 }
-

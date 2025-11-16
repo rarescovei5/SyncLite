@@ -1,7 +1,8 @@
-use crate::cli::types::{Args, Command, FlagType, ParseError, ParseErrorCode};
+use crate::cli::types::{CliArguments, Command, FlagType};
+use crate::utils::output::CliOutput;
 
 // Parse Function
-pub fn parse_args() -> Result<Args, ParseError> {
+pub fn parse_args() -> Result<CliArguments, Box<dyn std::error::Error>> {
     // Get the arguments from the command line
     let mut args = std::env::args().skip(1);
 
@@ -9,17 +10,13 @@ pub fn parse_args() -> Result<Args, ParseError> {
     let command: Command = match args.next().as_deref() {
         Some("serve") => Command::Serve,
         Some("connect") => Command::Connect,
-        Some(other) => {
-            return Err(ParseError {
-                message: format!("Invalid command: '{}'", other),
-                code: ParseErrorCode::UnknownCommand,
-            });
+        Some("help" | "-h" | "--help") => {
+            CliOutput::banner();
+            CliOutput::usage();
+            std::process::exit(0);
         }
-        None => {
-            return Err(ParseError {
-                message: "No command provided".to_string(),
-                code: ParseErrorCode::NoCommand,
-            });
+        _ => {
+            std::process::exit(1);
         }
     };
 
@@ -27,17 +24,13 @@ pub fn parse_args() -> Result<Args, ParseError> {
     let path: String = match args.next() {
         Some(path) => path,
         None => {
-            return Err(ParseError {
-                message: "No path provided".to_string(),
-                code: ParseErrorCode::NoPath,
-            });
+            CliOutput::error("No path provided", None);
+            std::process::exit(1);
         }
     };
     if !std::path::Path::new(&path).is_dir() {
-        return Err(ParseError {
-            message: format!("Path is not a directory: '{}'", path),
-            code: ParseErrorCode::InvalidPath,
-        });
+        CliOutput::error(&format!("Path is not a directory: '{}'", path), None);
+        std::process::exit(1);
     }
 
     // Other arguments
@@ -51,10 +44,8 @@ pub fn parse_args() -> Result<Args, ParseError> {
                 port = match arg.parse::<u16>() {
                     Ok(port) => port,
                     Err(_) => {
-                        return Err(ParseError {
-                            message: format!("Invalid port number: '{}'", arg),
-                            code: ParseErrorCode::InvalidPort,
-                        });
+                        CliOutput::error(&format!("Invalid port number: '{}'", arg), None);
+                        std::process::exit(1);
                     }
                 };
                 pending_flag = None;
@@ -68,16 +59,14 @@ pub fn parse_args() -> Result<Args, ParseError> {
                 pending_flag = Some(FlagType::Port);
             }
             _ => {
-                return Err(ParseError {
-                    message: format!("Unknown flag: '{}'", arg),
-                    code: ParseErrorCode::InvalidFlag,
-                });
+                CliOutput::error(&format!("Unknown flag: '{}'", arg), None);
+                std::process::exit(1);
             }
         }
     }
 
     // Return the arguments
-    Ok(Args {
+    Ok(CliArguments {
         command,
         path,
         port,

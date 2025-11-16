@@ -1,5 +1,5 @@
 mod confirm;
 pub use confirm::confirm;
-mod handle_result_or_exit;
-pub use handle_result_or_exit::handle_result_or_exit;
 pub mod output;
+mod unwrap_or_exit;
+pub use unwrap_or_exit::unwrap_or_exit;

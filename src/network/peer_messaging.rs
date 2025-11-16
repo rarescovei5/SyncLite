@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},

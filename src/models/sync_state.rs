@@ -53,15 +53,18 @@ impl SyncState {
     }
 
     /// Create a SyncState by scanning all files in the given directory recursively
-    pub fn from_directory(path: &str) -> Result<Self, String> {
+    pub fn from_directory(workspace_path: &Path) -> Result<Self, String> {
         let mut sync_state = Self::new();
 
-        let base_path = Path::new(path);
+        let base_path = workspace_path;
         if !base_path.exists() {
-            return Err(format!("Path does not exist: {}", path));
+            return Err(format!("Path does not exist: {}", workspace_path.display()));
         }
         if !base_path.is_dir() {
-            return Err(format!("Path is not a directory: {}", path));
+            return Err(format!(
+                "Path is not a directory: {}",
+                workspace_path.display()
+            ));
         }
 
         scan_directory_recursive(&base_path, &base_path, &mut sync_state.files)?;

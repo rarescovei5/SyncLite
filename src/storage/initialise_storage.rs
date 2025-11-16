@@ -1,62 +1,58 @@
 use crate::app;
-use crate::models::{PeersConfig, SyncState};
-use crate::storage::json_utils;
-use crate::utils::handle_result_or_exit;
+use crate::utils::unwrap_or_exit;
 use crate::utils::{confirm, output::CliOutput};
+use colored::Colorize;
 use std::{fs, path::Path};
 
 /// Initialize storage in the specified directory
-pub fn initialise_storage(path: &str) {
-    // Validate the path first
-    handle_result_or_exit(validate_path(path));
+pub fn initialise_storage(path: &Path) {
+    CliOutput::wrench("Checking Directory Status:".bright_yellow(), None);
 
-    let base_path = Path::new(path);
-    let storage_dir = base_path.join(".synclite");
+    unwrap_or_exit(validate_path(path));
 
-    // Check if already initialized
+    let storage_dir = path.join(".synclite");
+
     if storage_dir.exists() {
-        CliOutput::success("Directory is already initialized", None);
-        return;
+        CliOutput::info(".synclite folder detected", Some(5));
+    } else {
+        CliOutput::info("No .synclite folder detected", Some(5));
+        unwrap_or_exit(check_conflicts_and_cleanup(path));
+        unwrap_or_exit(prompt_directory_creation());
+        unwrap_or_exit(create_storage_directory(&storage_dir));
     }
 
-    // Check for conflicts and clean registry
-    handle_result_or_exit(check_conflicts_and_cleanup(path));
-
-    // Get user confirmation
-    if !get_user_confirmation() {
-        CliOutput::cancelled("Initialization cancelled", Some(3));
-        std::process::exit(1);
-    }
-
-    // Create the storage directory
-    handle_result_or_exit(create_storage_directory(&storage_dir));
-
-    // Initialize configuration files
-    handle_result_or_exit(initialize_config_files(&storage_dir));
-
-    // Register the directory
-    handle_result_or_exit(register_directory(path));
+    print!("\n");
+    CliOutput::wrench(
+        "Checking contents of .synclite folder:".bright_yellow(),
+        None,
+    );
+    unwrap_or_exit(create_storage_files(&storage_dir));
+    unwrap_or_exit(register_directory(path));
 }
 
 /// Validate that the provided path exists and is a directory
-fn validate_path(path: &str) -> Result<(), String> {
-    let base_path = Path::new(path);
-
-    if !base_path.exists() {
-        return Err(format!("Path does not exist: {}", path));
+fn validate_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!(
+            "Cannot initialize synclite here because the path does not exist: {}",
+            path.display()
+        ));
     }
 
-    if !base_path.is_dir() {
-        return Err(format!("Path is not a directory: {}", path));
+    if !path.is_dir() {
+        return Err(format!(
+            "Cannot initialize synclite here because the path is not a directory, but a file: {}",
+            path.display()
+        ));
     }
 
     Ok(())
 }
 
 /// Check for conflicts with existing synclite directories and cleanup registry
-fn check_conflicts_and_cleanup(path: &str) -> Result<(), String> {
+fn check_conflicts_and_cleanup(path: &Path) -> Result<(), String> {
     // Clean up the registry first (remove stale entries)
-    app::cleanup_registry().map_err(|e| format!("Failed to cleanup registry: {}", e))?;
+    app::cleanup_registry()?;
 
     // Check for conflicts with existing synclite directories using the registry
     let (has_conflict, conflicting_dir) = app::check_path_conflicts(path)
@@ -70,44 +66,50 @@ fn check_conflicts_and_cleanup(path: &str) -> Result<(), String> {
             );
             CliOutput::info(
                 &format!("Conflicting synclite directory: {}", conflicting_path),
-                Some(3),
+                Some(5),
             );
-            CliOutput::info("Please either:", Some(3));
+            CliOutput::info("Please either:", Some(5));
             CliOutput::info("  1. Use the existing synclite directory, or", Some(6));
             CliOutput::info("  2. Remove the existing .synclite directory, or", Some(6));
             CliOutput::info(
                 "  3. Choose a different directory outside of the synclite workspace",
                 Some(6),
             );
-            return Err("Path conflict detected".to_string());
+            return Err("Path conflict detected".into());
         }
     }
+
+    CliOutput::success("Directory is valid for initialization", Some(5));
 
     Ok(())
 }
 
 /// Get user confirmation to proceed with initialization
-fn get_user_confirmation() -> bool {
-    CliOutput::step(1, 3, "Checking directory status");
-
-    match confirm(
-        "This directory is not initialized. Do you want to initialize it? (y/n): ",
-        Some(3),
-    ) {
-        Ok(answer) => ["y", "yes"].contains(&answer.trim().to_lowercase().as_str()),
+/// Returns Ok(()) if the user confirms, Err(String) if the user does not confirm
+fn prompt_directory_creation() -> Result<(), String> {
+    match confirm("Do you want to initialize it? (y/n): ", Some(5)) {
+        Ok(answer) => {
+            if ["y", "yes"].contains(&answer.trim().to_lowercase().as_str()) {
+                return Ok(());
+            } else {
+                return Err("User did not confirm initialization".into());
+            }
+        }
         Err(e) => {
-            CliOutput::error(&format!("Failed to get user input: {}", e), Some(3));
-            false
+            return Err(format!("Failed to get user input: {}", e));
         }
     }
 }
 
 /// Create the .synclite storage directory
 fn create_storage_directory(storage_dir: &Path) -> Result<(), String> {
-    CliOutput::step(2, 3, "Creating .synclite directory");
-
     fs::create_dir_all(storage_dir)
         .map_err(|e| format!("Failed to create .synclite directory: {}", e))?;
+
+    CliOutput::info(
+        &format!("Created .synclite directory: {}", storage_dir.display()),
+        Some(5),
+    );
 
     #[cfg(windows)]
     make_hidden_windows(storage_dir)?;
@@ -115,33 +117,56 @@ fn create_storage_directory(storage_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Initialize configuration files (peers.json and state.json)
-fn initialize_config_files(storage_dir: &Path) -> Result<(), String> {
-    CliOutput::step(3, 3, "Finalizing setup");
-
+/// Create configuration files (peers.json and state.json) if they do not exist
+fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
     // Create the peers file
-    json_utils::write_peers_config(storage_dir, &PeersConfig::new())
-        .map_err(|e| format!("Failed to create peers.json: {}", e))?;
-
-    CliOutput::info(
-        &format!("Created file: {}", storage_dir.join("peers.json").display()),
-        Some(3),
-    );
+    if !storage_dir.join("peers.json").exists() {
+        fs::write(storage_dir.join("peers.json"), "")
+            .map_err(|e| format!("Failed to create peers.json: {}", e))?;
+        CliOutput::info(
+            &format!(
+                "Created peers.json: {}",
+                storage_dir.join("peers.json").display()
+            ),
+            Some(5),
+        );
+    } else {
+        CliOutput::info(
+            &format!(
+                "peers.json already exists: {}",
+                storage_dir.join("peers.json").display()
+            ),
+            Some(5),
+        );
+    }
 
     // Create the state file
-    json_utils::write_sync_state(storage_dir, &SyncState::new())
-        .map_err(|e| format!("Failed to create state.json: {}", e))?;
+    if !storage_dir.join("state.json").exists() {
+        fs::write(storage_dir.join("state.json"), "")
+            .map_err(|e| format!("Failed to create state.json: {}", e))?;
 
-    CliOutput::info(
-        &format!("Created file: {}", storage_dir.join("state.json").display()),
-        Some(3),
-    );
+        CliOutput::info(
+            &format!(
+                "Created state.json: {}",
+                storage_dir.join("state.json").display()
+            ),
+            Some(5),
+        );
+    } else {
+        CliOutput::info(
+            &format!(
+                "state.json already exists: {}",
+                storage_dir.join("state.json").display()
+            ),
+            Some(5),
+        );
+    }
 
     Ok(())
 }
 
 /// Register the directory in the global registry
-fn register_directory(path: &str) -> Result<(), String> {
+fn register_directory(path: &Path) -> Result<(), String> {
     app::add_directory(path).map_err(|e| format!("Failed to add directory to registry: {}", e))
 }
 
@@ -160,8 +185,10 @@ fn make_hidden_windows(path: &Path) -> Result<(), String> {
     let result = unsafe { SetFileAttributesW(wide_path.as_ptr(), FILE_ATTRIBUTE_HIDDEN) };
 
     if result == 0 {
-        CliOutput::error("Failed to set hidden attribute on Windows", None);
-        std::process::exit(1);
+        return Err(format!(
+            "Failed to set hidden attribute on Windows: {}",
+            result
+        ));
     }
 
     Ok(())

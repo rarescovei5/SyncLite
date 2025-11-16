@@ -1,13 +1,12 @@
 use colored::Colorize;
 use std::io::{self, Write};
 
-pub fn confirm(
-    message: &str,
-    padding_left: Option<usize>,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub fn confirm(message: &str, padding_left: Option<usize>) -> Result<String, String> {
     let pad = " ".repeat(padding_left.unwrap_or(0));
-    print!("{}🤔 {}", pad, message.bright_cyan());
-    io::stdout().flush()?;
+    print!("{}🤔 {}", pad, message.bright_white());
+    io::stdout()
+        .flush()
+        .map_err(|e| format!("Failed to flush stdout: {}", e))?;
 
     let mut input = String::new();
     io::stdin()

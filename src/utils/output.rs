@@ -1,5 +1,6 @@
 use chrono::Utc;
 use colored::*;
+use std::fmt::Display;
 
 /// CLI output utilities with consistent styling
 pub struct CliOutput;
@@ -7,11 +8,15 @@ pub struct CliOutput;
 // Presets
 impl CliOutput {
     pub fn banner() {
-        println!();
-        println!("{}", "🚀 SyncLite".bright_cyan().bold());
-        println!("   {} {}", "Version".dimmed(), "v0.1.0".bright_white());
-        println!("   {}", "A lightweight file synchronization tool".dimmed());
-        println!();
+        let ascii_art = r#"
+                            .__  .__  __          
+  _________.__. ____   ____ |  | |__|/  |_  ____  
+ /  ___<   |  |/    \_/ ___\|  | |  \   __\/ __ \ 
+ \___ \ \___  |   |  \  \___|  |_|  ||  | \  ___/ 
+/____  >/ ____|___|  /\___  >____/__||__|  \___  >
+     \/ \/         \/     \/                   \/                      
+"#;
+        println!("{}", ascii_art.bright_yellow().bold());
     }
 
     pub fn usage() {
@@ -45,78 +50,59 @@ impl CliOutput {
         );
         println!();
     }
-
-    pub fn step(current: usize, total: usize, message: &str) {
-        println!(
-            "{} {} {}",
-            format!("[{}/{}]", current, total).bright_black().bold(),
-            "→".bright_cyan(),
-            message.bright_white()
-        );
-    }
-
-    pub fn initializing(path: &str) {
-        println!();
-        println!("🔧 {}", "Initializing SyncLite...".bright_yellow().bold());
-        println!(
-            "📁 {}",
-            format!("Target directory: {}", path).bright_white()
-        );
-        println!();
-    }
 }
 
 // Utilities
 impl CliOutput {
-    pub fn success(message: &str, padding_left: Option<usize>) {
+    pub fn success(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}✅ {}", pad, message.bright_green());
+        println!("{}✅ {}", pad, message);
     }
 
-    pub fn log(message: &str, padding_left: Option<usize>) {
+    pub fn log(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
         println!(
             "{}[{}]: {}",
             pad,
             Utc::now().time().to_string().bright_black().bold(),
-            message.bright_blue()
+            message
         );
     }
 
-    pub fn wrench(message: &str, padding_left: Option<usize>) {
+    pub fn wrench(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}🔧 {}", pad, message.bright_yellow().bold());
+        println!("{}🔧 {}", pad, message);
     }
 
-    pub fn error(message: &str, padding_left: Option<usize>) {
+    pub fn error(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        eprintln!("{}❌ {}", pad, message.bright_red());
+        eprintln!("{}❌ {}", pad, message);
     }
 
-    pub fn warning(message: &str, padding_left: Option<usize>) {
+    pub fn warning(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}⚠️ {}", pad, message.bright_yellow());
+        println!("{}⚠️ {}", pad, message);
     }
 
-    pub fn info(message: &str, padding_left: Option<usize>) {
+    pub fn info(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}ℹ️  {}", pad, message.bright_blue());
+        println!("{}ℹ️  {}", pad, message);
     }
 
-    pub fn question(message: &str, padding_left: Option<usize>) {
+    pub fn question(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}🤔 {}", pad, message.bright_cyan());
+        println!("{}🤔 {}", pad, message);
     }
-    pub fn cancelled(message: &str, padding_left: Option<usize>) {
+    pub fn cancelled(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
 
-        println!("{}🚫 {}", pad, message.bright_red());
+        println!("{}🚫 {}", pad, message);
     }
 }

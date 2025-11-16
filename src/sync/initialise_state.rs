@@ -1,13 +1,25 @@
 use crate::models::SyncState;
 use crate::storage::{read_sync_state, write_sync_state};
-use crate::utils::{handle_result_or_exit, output::CliOutput};
+use crate::utils::{output::CliOutput, unwrap_or_exit};
+use colored::Colorize;
 use std::path::Path;
 
-pub fn initialise_state(path: &str) {
-    let storage_dir = Path::new(path).join(".synclite");
+pub fn initialise_state(workspace_path: &Path) {
+    let result_sync_state = unwrap_or_exit(compute_hashes(workspace_path));
 
-    let stored_sync_state = handle_result_or_exit(read_sync_state(&storage_dir));
-    let mut result_sync_state = handle_result_or_exit(SyncState::from_directory(path));
+    let storage_dir = workspace_path.join(".synclite");
+    unwrap_or_exit(write_sync_state(&storage_dir, &result_sync_state));
+
+    CliOutput::success(
+        "Successfully computed hashes for all files".bright_green(),
+        None,
+    );
+}
+
+pub fn compute_hashes(workspace_path: &Path) -> Result<SyncState, String> {
+    let storage_dir = workspace_path.join(".synclite");
+    let stored_sync_state = unwrap_or_exit(read_sync_state(&storage_dir));
+    let mut result_sync_state = unwrap_or_exit(SyncState::from_directory(workspace_path));
 
     // Add tombstone markers for files that are deleted
     for (file_path, file_entry) in &stored_sync_state.files {
@@ -61,7 +73,5 @@ pub fn initialise_state(path: &str) {
         result_sync_state.files.insert(file_path, updated_entry);
     }
 
-    handle_result_or_exit(write_sync_state(&storage_dir, &result_sync_state));
-
-    CliOutput::success("Successfully computed hashes for all files", None);
+    Ok(result_sync_state)
 }

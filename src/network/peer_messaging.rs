@@ -8,10 +8,8 @@ use uuid::Uuid;
 // Message types for peer communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PeerMessage {
-    // Sent when a new peer connects to the leader
-    NewPeerJoined { peer_id: String, peer_addr: String },
     // Sent to acknowledge successful connection
-    ConnectionAck { peer_id: String },
+    ConnectionAck { peer_id: String, leader_id: String },
     // Sent to update peer list
     PeerListUpdate { peers: Vec<String> },
 }

@@ -1,6 +1,10 @@
-use crate::app;
-use crate::utils::unwrap_or_exit;
-use crate::utils::{confirm, output::CliOutput};
+use crate::{
+    app,
+    models::{PeersConfig, SyncState},
+    storage::{write_peers_config, write_sync_state},
+    utils::{confirm, output::CliOutput, unwrap_or_exit},
+};
+
 use colored::Colorize;
 use std::{fs, path::Path};
 
@@ -121,11 +125,9 @@ fn create_storage_directory(storage_dir: &Path) -> Result<(), String> {
 fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
     // Create the peers file
     if !storage_dir.join("peers.json").exists() {
-        fs::write(storage_dir.join("peers.json"), "")
-            .map_err(|e| format!("Failed to create peers.json: {}", e))?;
         CliOutput::info(
             &format!(
-                "Created peers.json: {}",
+                "Creating peers.json file at: {}",
                 storage_dir.join("peers.json").display()
             ),
             Some(5),
@@ -133,21 +135,24 @@ fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
     } else {
         CliOutput::info(
             &format!(
-                "peers.json already exists: {}",
+                "File peers.json already exists: {}, correcting contents...",
                 storage_dir.join("peers.json").display()
             ),
             Some(5),
         );
     }
 
+    let peers_config = PeersConfig::new();
+    write_peers_config(storage_dir, &peers_config)?;
+
     // Create the state file
     if !storage_dir.join("state.json").exists() {
-        fs::write(storage_dir.join("state.json"), "")
-            .map_err(|e| format!("Failed to create state.json: {}", e))?;
+        let state_config = SyncState::new();
+        write_sync_state(storage_dir, &state_config)?;
 
         CliOutput::info(
             &format!(
-                "Created state.json: {}",
+                "Creating state.json file at: {}",
                 storage_dir.join("state.json").display()
             ),
             Some(5),

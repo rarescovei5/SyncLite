@@ -18,7 +18,7 @@ pub fn initialise_state(workspace_path: &Path) {
 
 pub fn compute_hashes(workspace_path: &Path) -> Result<SyncState, String> {
     let storage_dir = workspace_path.join(".synclite");
-    let stored_sync_state = unwrap_or_exit(read_sync_state(&storage_dir));
+    let stored_sync_state = read_sync_state(&storage_dir);
     let mut result_sync_state = unwrap_or_exit(SyncState::from_directory(workspace_path));
 
     // Add tombstone markers for files that are deleted

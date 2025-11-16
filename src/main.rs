@@ -1,20 +1,19 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
 use synclite::{
     cli::{self, types::Command},
-    models::PeersConfig,
-    network::{PeerMessage, generate_peer_id, receive_message_from_peer, send_message_to_peer},
-    storage::{initialise_storage, read_peers_config, write_peers_config},
+    models::{PersistentPeersConfig, PersistentSyncState},
+    network::{
+        PeerConnectionManager, PeerMessage, generate_peer_id, receive_message_from_peer,
+        send_message_to_peer,
+    },
+    storage::{initialise_storage, read_peers_config, read_sync_state},
     sync::initialise_state,
-    utils::{output::CliOutput, unwrap_or_exit},
+    utils::output::CliOutput,
 };
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpStream};
 
 use colored::Colorize;
 
@@ -43,245 +42,268 @@ async fn main() -> std::io::Result<()> {
 
     print!("\n");
 
-    // // Shared state for peer connections
-    // let connected_peers: Arc<Mutex<HashMap<String, SocketAddr>>> =
-    //     Arc::new(Mutex::new(HashMap::new()));
+    let _sync_state = Arc::new(PersistentSyncState::new(
+        read_sync_state(&storage_path),
+        &storage_path,
+    ));
+    let peers_config = Arc::new(PersistentPeersConfig::new(
+        read_peers_config(&storage_path),
+        &storage_path,
+    ));
 
-    // match args.command {
-    //     Command::Serve => {
-    //         let addr: SocketAddr = format!("127.0.0.1:{}", args.port).parse().unwrap();
-    //         let listener = TcpListener::bind(addr).await?;
+    match args.command {
+        Command::Serve => {
+            let leader_id = generate_peer_id();
+            let addr: SocketAddr = format!("127.0.0.1:{}", args.port).parse().unwrap();
+            let listener = TcpListener::bind(addr).await?;
 
-    //         // Set this peer as the leader
-    //         let mut peers_config = read_peers_config(&storage_path).unwrap();
-    //         let leader_id = generate_peer_id();
-    //         peers_config.set_leader(leader_id.clone());
-    //         write_peers_config(&storage_path, &peers_config).unwrap();
+            // Initialize connection manager
+            let connection_manager = Arc::new(PeerConnectionManager::new());
 
-    //         let peers_config: Arc<Mutex<PeersConfig>> = Arc::new(Mutex::new(peers_config));
+            // Set this peer as the leader
+            if let Err(e) = peers_config.set_leader(leader_id.clone()).await {
+                CliOutput::error(&format!("Failed to set leader: {}", e), None);
+            }
 
-    //         println!("\n{}\n", "-=".repeat(40).black().bold());
-    //         CliOutput::wrench(&format!("Listening on: {}", addr.to_string()), None);
-    //         CliOutput::info(&format!("Leader ID: {}", generate_peer_id()), None);
-    //         println!("\n{}\n", "-=".repeat(40).black().bold());
+            // Separate connection logs from the rest of the logs for clarity
+            println!("\n{}\n", "-=".repeat(40).black().bold());
+            CliOutput::wrench(&format!("Listening on: {}", addr.to_string()), None);
+            CliOutput::info(&format!("Leader ID: {}", leader_id), None);
+            println!("\n{}\n", "-=".repeat(40).black().bold());
 
-    //         while let Ok((stream, peer_addr)) = listener.accept().await {
-    //             let peers_clone = Arc::clone(&connected_peers);
-    //             let storage_path_clone = storage_path.clone();
-    //             let peers_config_clone = Arc::clone(&peers_config);
+            while let Ok((stream, peer_addr)) = listener.accept().await {
+                let peers_config = Arc::clone(&peers_config);
+                let connection_manager = Arc::clone(&connection_manager);
+                let leader_id = leader_id.clone();
 
-    //             tokio::spawn(async move {
-    //                 let peer_id = generate_peer_id();
-    //                 CliOutput::log(
-    //                     &format!("New peer connecting: {} ({})", peer_id, peer_addr),
-    //                     None,
-    //                 );
+                tokio::spawn(async move {
+                    let peer_id = generate_peer_id();
+                    CliOutput::log(
+                        &format!("New peer connecting: {} ({})", peer_id, peer_addr).bright_cyan(),
+                        None,
+                    );
 
-    //                 let (mut reader, mut writer) = stream.into_split();
+                    let (mut reader, mut writer) = stream.into_split();
 
-    //                 // Send connection acknowledgment with peer ID
-    //                 if let Err(e) = send_message_to_peer(
-    //                     &mut writer,
-    //                     &PeerMessage::ConnectionAck {
-    //                         peer_id: peer_id.clone(),
-    //                     },
-    //                 )
-    //                 .await
-    //                 {
-    //                     CliOutput::error(
-    //                         &format!("Failed to send ack to peer {}: {}", peer_id, e),
-    //                         None,
-    //                     );
-    //                     return;
-    //                 }
+                    // Send connection acknowledgment with peer ID
+                    CliOutput::log(
+                        &format!("Sending connection acknowledgment to peer: {}", peer_id),
+                        None,
+                    );
+                    if let Err(e) = send_message_to_peer(
+                        &mut writer,
+                        &PeerMessage::ConnectionAck {
+                            peer_id: peer_id.clone(),
+                            leader_id: leader_id.clone(),
+                        },
+                    )
+                    .await
+                    {
+                        CliOutput::log(
+                            &format!("Failed to send acknowledgement to peer {}: {}", peer_id, e)
+                                .bright_red()
+                                .bold(),
+                            None,
+                        );
+                        return;
+                    }
+                    CliOutput::log(&format!("Acknowledgement sent to peer: {}", peer_id), None);
 
-    //                 // Add peer to connected peers list
-    //                 {
-    //                     let mut peers = peers_clone.lock().await;
-    //                     peers.insert(peer_id.clone(), peer_addr);
-    //                 }
+                    // Add peer to connection manager
+                    CliOutput::log(
+                        &format!(
+                            "Adding peer to connection manager and peers config: {}",
+                            peer_id
+                        ),
+                        None,
+                    );
 
-    //                 // Update peers config and save to disk
-    //                 {
-    //                     let mut config = peers_config_clone.lock().await;
-    //                     config.add_peer(format!("{}:{}", peer_addr.ip(), peer_addr.port()));
-    //                     if let Err(e) = write_peers_config(&storage_path_clone, &config) {
-    //                         CliOutput::error(&format!("Failed to save peers config: {}", e), None);
-    //                     }
-    //                 }
+                    connection_manager
+                        .add_connection(peer_id.clone(), writer)
+                        .await;
 
-    //                 // Notify all other peers about the new peer
-    //                 let _new_peer_message = PeerMessage::NewPeerJoined {
-    //                     peer_id: peer_id.clone(),
-    //                     peer_addr: peer_addr.to_string(),
-    //                 };
+                    // Add peer to connected peers list
+                    if let Err(e) = peers_config
+                        .add_peer(format!("{}:{}", peer_addr.port(), peer_id))
+                        .await
+                    {
+                        CliOutput::error(&format!("Failed to add peer to config: {}", e), None);
+                    }
 
-    //                 // Send notification to all existing peers
-    //                 {
-    //                     let peers = peers_clone.lock().await;
-    //                     let peer_count = peers.len();
-    //                     if peer_count > 1 {
-    //                         CliOutput::log(
-    //                             &format!(
-    //                                 "Notifying {} existing peers about new peer {}",
-    //                                 peer_count - 1,
-    //                                 peer_id
-    //                             ),
-    //                             None,
-    //                         );
-    //                         // Note: In a full implementation, you would maintain active connections
-    //                         // to all peers and send the _new_peer_message to each of them
-    //                     }
-    //                 }
+                    // Notify all other peers about the new peer
+                    {
+                        let peers_changed_message = PeerMessage::PeerListUpdate {
+                            peers: peers_config.config().await.peers.clone(),
+                        };
 
-    //                 CliOutput::log(
-    //                     &format!("Peer {} successfully connected and registered", peer_id),
-    //                     None,
-    //                 );
+                        // Broadcast to all existing peers (except the new one)
+                        CliOutput::log(
+                            &format!(
+                                "Notifying {} existing peers about new peer {}",
+                                connection_manager.connection_count().await,
+                                peer_id
+                            ),
+                            None,
+                        );
 
-    //                 // Handle incoming messages from this peer
-    //                 loop {
-    //                     match receive_message_from_peer(&mut reader).await {
-    //                         Ok(message) => {
-    //                             CliOutput::info(
-    //                                 &format!("Received message from {}: {:?}", peer_id, message),
-    //                                 None,
-    //                             );
-    //                             // Handle different message types here
-    //                         }
-    //                         Err(e) => {
-    //                             CliOutput::error(
-    //                                 &format!("Error receiving message from {}: {}", peer_id, e),
-    //                                 None,
-    //                             );
-    //                             break;
-    //                         }
-    //                     }
-    //                 }
+                        connection_manager
+                            .broadcast_message(&peers_changed_message)
+                            .await;
+                    }
 
-    //                 // Remove peer when connection is lost
-    //                 {
-    //                     let mut peers = peers_clone.lock().await;
-    //                     peers.remove(&peer_id);
-    //                 }
-    //                 CliOutput::log(&format!("Peer {} disconnected", peer_id), None);
-    //             });
-    //         }
-    //     }
-    //     Command::Connect => {
-    //         let addr: SocketAddr = format!("127.0.0.1:{}", args.port).parse().unwrap();
-    //         let stream = match TcpStream::connect(addr).await {
-    //             Ok(stream) => stream,
-    //             Err(_) => {
-    //                 CliOutput::error(&format!("Failed to connect to: {}", addr.to_string()), None);
-    //                 std::process::exit(1);
-    //             }
-    //         };
+                    // Handle incoming messages from this peer
+                    loop {
+                        match receive_message_from_peer(&mut reader).await {
+                            Ok(message) => {
+                                CliOutput::info(
+                                    &format!("Received message from {}: {:?}", peer_id, message),
+                                    None,
+                                );
+                                // Handle different message types here
+                            }
+                            Err(e) => {
+                                CliOutput::error(
+                                    &format!("Error receiving message from {}: {}", peer_id, e),
+                                    None,
+                                );
+                                break;
+                            }
+                        }
+                    }
 
-    //         println!("{}\n", "-=".repeat(40).black().bold());
-    //         CliOutput::wrench(&format!("Connected to: {}", addr.to_string()), None);
-    //         println!("\n{}\n", "-=".repeat(40).black().bold());
+                    // Remove peer from connection manager and peers config when connection is lost
+                    CliOutput::log(&format!("Peer {} disconnected", peer_id), None);
+                    {
+                        CliOutput::log(
+                            &format!(
+                                "Removing peer {} from connection manager and peers config",
+                                peer_id
+                            ),
+                            None,
+                        );
+                        connection_manager.remove_connection(&peer_id).await;
+                        if let Err(e) = peers_config
+                            .remove_peer(format!("{}:{}", peer_addr.port(), peer_id).as_str())
+                            .await
+                        {
+                            CliOutput::log(
+                                &format!("Failed to remove peer {} from config: {}", peer_id, e)
+                                    .bright_red()
+                                    .bold(),
+                                None,
+                            );
+                        }
 
-    //         let (mut reader, _writer) = stream.into_split();
+                        CliOutput::log(
+                            &format!(
+                                "Notifying {} existing peers about new peer {}",
+                                connection_manager.connection_count().await,
+                                peer_id
+                            ),
+                            None,
+                        );
 
-    //         // Wait for connection acknowledgment from leader
-    //         match receive_message_from_peer(&mut reader).await {
-    //             Ok(PeerMessage::ConnectionAck { peer_id }) => {
-    //                 CliOutput::success(
-    //                     &format!("Connection acknowledged! Assigned peer ID: {}", peer_id),
-    //                     None,
-    //                 );
+                        let peers_changed_message = PeerMessage::PeerListUpdate {
+                            peers: peers_config.config().await.peers.clone(),
+                        };
+                        connection_manager
+                            .broadcast_message(&peers_changed_message)
+                            .await;
+                    }
+                });
+            }
+        }
+        Command::Connect => {
+            let addr: SocketAddr = format!("127.0.0.1:{}", args.port).parse().unwrap();
+            let Ok(stream) = TcpStream::connect(addr).await else {
+                CliOutput::error(&format!("Failed to connect to: {}", addr.to_string()), None);
+                std::process::exit(1);
+            };
 
-    //                 // Update peers config to set the leader
-    //                 let mut config = read_peers_config(&storage_path).unwrap();
-    //                 config.set_leader(addr.to_string());
-    //                 if let Err(e) = write_peers_config(&storage_path, &config) {
-    //                     CliOutput::error(&format!("Failed to save peers config: {}", e), None);
-    //                 }
+            // Separate connection logs from the rest of the logs for clarity
+            println!("{}\n", "-=".repeat(40).black().bold());
+            CliOutput::wrench(&format!("Connected to: {}", addr.to_string()), None);
+            println!("\n{}\n", "-=".repeat(40).black().bold());
 
-    //                 CliOutput::info(
-    //                     &format!("Successfully joined network as peer: {}", peer_id),
-    //                     None,
-    //                 );
+            let (mut reader, _writer) = stream.into_split();
 
-    //                 // Listen for messages from the leader
-    //                 loop {
-    //                     match receive_message_from_peer(&mut reader).await {
-    //                         Ok(message) => {
-    //                             match message {
-    //                                 PeerMessage::NewPeerJoined {
-    //                                     peer_id: new_peer_id,
-    //                                     peer_addr: new_peer_addr,
-    //                                 } => {
-    //                                     CliOutput::info(
-    //                                         &format!(
-    //                                             "New peer joined network: {} ({})",
-    //                                             new_peer_id, new_peer_addr
-    //                                         ),
-    //                                         None,
-    //                                     );
+            // Wait for connection acknowledgment from leader
+            match receive_message_from_peer(&mut reader).await {
+                Ok(PeerMessage::ConnectionAck { peer_id, leader_id }) => {
+                    CliOutput::log(
+                        &format!("Successfully joined network as peer: {}", peer_id)
+                            .bright_green()
+                            .bold(),
+                        None,
+                    );
 
-    //                                     // Update local peers config
-    //                                     let mut config = read_peers_config(&storage_path).unwrap();
-    //                                     config.add_peer(new_peer_addr);
-    //                                     if let Err(e) = write_peers_config(&storage_path, &config) {
-    //                                         CliOutput::error(
-    //                                             &format!("Failed to update peers config: {}", e),
-    //                                             None,
-    //                                         );
-    //                                     }
-    //                                 }
-    //                                 PeerMessage::PeerListUpdate { peers } => {
-    //                                     CliOutput::info(
-    //                                         &format!("Received peer list update: {:?}", peers),
-    //                                         None,
-    //                                     );
+                    // Update peers config to set the leader
+                    if let Err(e) = peers_config.set_leader(leader_id).await {
+                        CliOutput::error(&format!("Failed to set leader: {}", e), None);
+                    }
 
-    //                                     // Update local peers config with full peer list
-    //                                     let mut config = read_peers_config(&storage_path).unwrap();
-    //                                     config.peers = peers;
-    //                                     if let Err(e) = write_peers_config(&storage_path, &config) {
-    //                                         CliOutput::error(
-    //                                             &format!("Failed to update peers config: {}", e),
-    //                                             None,
-    //                                         );
-    //                                     }
-    //                                 }
-    //                                 _ => {
-    //                                     CliOutput::info(
-    //                                         &format!("Received message: {:?}", message),
-    //                                         None,
-    //                                     );
-    //                                 }
-    //                             }
-    //                         }
-    //                         Err(e) => {
-    //                             CliOutput::error(
-    //                                 &format!("Connection to leader lost: {}", e),
-    //                                 None,
-    //                             );
-    //                             break;
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //             Ok(other_message) => {
-    //                 CliOutput::error(
-    //                     &format!("Unexpected message from leader: {:?}", other_message),
-    //                     None,
-    //                 );
-    //                 std::process::exit(1);
-    //             }
-    //             Err(e) => {
-    //                 CliOutput::error(
-    //                     &format!("Failed to receive acknowledgment from leader: {}", e),
-    //                     None,
-    //                 );
-    //                 std::process::exit(1);
-    //             }
-    //         }
-    //     }
-    // }
+                    // Listen for messages from the leader
+                    loop {
+                        match receive_message_from_peer(&mut reader).await {
+                            Ok(message) => {
+                                match message {
+                                    PeerMessage::PeerListUpdate { peers } => {
+                                        CliOutput::log(
+                                            &format!("Received peer list update: {:?}", peers),
+                                            None,
+                                        );
+
+                                        // Update local peers config with full peer list
+                                        if let Err(e) = peers_config.set_peers(peers).await {
+                                            CliOutput::log(
+                                                &format!("Failed to update peers config: {}", e)
+                                                    .bright_red()
+                                                    .bold(),
+                                                None,
+                                            );
+                                        }
+                                    }
+                                    _ => {
+                                        CliOutput::log(
+                                            &format!("Received message: {:?}", message),
+                                            None,
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                CliOutput::log(
+                                    &format!("Connection to leader lost: {}", e)
+                                        .bright_red()
+                                        .bold(),
+                                    None,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+                Ok(other_message) => {
+                    CliOutput::log(
+                        &format!("Unexpected message from leader: {:?}", other_message)
+                            .bright_red()
+                            .bold(),
+                        None,
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    CliOutput::log(
+                        &format!("Failed to receive acknowledgment from leader: {}", e)
+                            .bright_red()
+                            .bold(),
+                        None,
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 
     Ok(())
 }

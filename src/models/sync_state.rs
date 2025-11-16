@@ -79,6 +79,58 @@ impl Default for SyncState {
     }
 }
 
+impl SyncState {
+    /// Add or update a file entry
+    pub fn add_file(&mut self, path: String, hash: String) {
+        self.files.insert(path, FileEntry::new(hash));
+        self.last_sync = Utc::now();
+    }
+
+    /// Mark a file as deleted (tombstone)
+    pub fn delete_file(&mut self, path: &str) {
+        if let Some(entry) = self.files.get_mut(path) {
+            entry.is_deleted = true;
+            entry.hash = None;
+            entry.clock += 1;
+        } else {
+            // File wasn't tracked, but we still need a tombstone
+            self.files
+                .insert(path.to_string(), FileEntry::new_deleted());
+        }
+        self.last_sync = Utc::now();
+    }
+
+    /// Update file hash (when file content changes)
+    pub fn update_file(&mut self, path: &str, new_hash: String) {
+        if let Some(entry) = self.files.get_mut(path) {
+            entry.hash = Some(new_hash);
+            entry.is_deleted = false;
+            entry.clock += 1;
+        } else {
+            // New file
+            self.files
+                .insert(path.to_string(), FileEntry::new(new_hash));
+        }
+        self.last_sync = Utc::now();
+    }
+
+    /// Remove a file entry completely (not just mark as deleted)
+    pub fn remove_file(&mut self, path: &str) {
+        self.files.remove(path);
+        self.last_sync = Utc::now();
+    }
+
+    /// Get file entry by path
+    pub fn get_file(&self, path: &str) -> Option<&FileEntry> {
+        self.files.get(path)
+    }
+
+    /// Check if a file exists and is not deleted
+    pub fn file_exists(&self, path: &str) -> bool {
+        self.files.get(path).map_or(false, |entry| entry.exists())
+    }
+}
+
 /// Recursively scan a directory and populate the files HashMap
 fn scan_directory_recursive(
     current_path: &Path,

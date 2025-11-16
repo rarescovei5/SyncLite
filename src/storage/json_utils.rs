@@ -27,11 +27,11 @@ pub fn write_peers_config(storage_dir: &Path, config: &PeersConfig) -> Result<()
 }
 
 /// Helper to read peers config from the standard location
-pub fn read_peers_config(storage_dir: &Path) -> Result<PeersConfig, String> {
+pub fn read_peers_config(storage_dir: &Path) -> PeersConfig {
     let peers_file = storage_dir.join("peers.json");
     match read_json(&peers_file) {
-        Ok(config) => Ok(config),
-        Err(_) => Ok(PeersConfig::new()),
+        Ok(config) => config,
+        Err(_) => PeersConfig::new(),
     }
 }
 
@@ -42,10 +42,10 @@ pub fn write_sync_state(storage_dir: &Path, state: &SyncState) -> Result<(), Str
 }
 
 /// Helper to read sync state from the standard location
-pub fn read_sync_state(storage_dir: &Path) -> Result<SyncState, String> {
+pub fn read_sync_state(storage_dir: &Path) -> SyncState {
     let state_file = storage_dir.join("state.json");
     match read_json(&state_file) {
-        Ok(state) => Ok(state),
-        Err(_) => Ok(SyncState::new()),
+        Ok(state) => state,
+        Err(_) => SyncState::new(),
     }
 }

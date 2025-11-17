@@ -6,8 +6,8 @@ use synclite::{
     cli::{self, types::Command},
     models::{PersistentPeersConfig, PersistentSyncState},
     network::{
-        PeerConnectionManager, PeerMessage, generate_peer_id, receive_message_from_peer,
-        send_message_to_peer,
+        PeerConnectionManager, PeerMessage, acknowledge_peer, broadcast_peer_list,
+        generate_peer_id, receive_message_from_peer,
     },
     storage::{initialise_storage, read_peers_config, read_sync_state},
     sync::initialise_state,
@@ -39,7 +39,6 @@ async fn main() -> std::io::Result<()> {
     initialise_storage(workspace_path);
     print!("\n");
     initialise_state(workspace_path);
-
     print!("\n");
 
     let _sync_state = Arc::new(PersistentSyncState::new(
@@ -77,78 +76,48 @@ async fn main() -> std::io::Result<()> {
                 let leader_id = leader_id.clone();
 
                 tokio::spawn(async move {
+                    let (mut reader, writer) = stream.into_split();
+
+                    // Generate peer ID
                     let peer_id = generate_peer_id();
                     CliOutput::log(
                         &format!("New peer connecting: {} ({})", peer_id, peer_addr).bright_cyan(),
                         None,
                     );
 
-                    let (mut reader, mut writer) = stream.into_split();
-
-                    // Send connection acknowledgment with peer ID
-                    CliOutput::log(
-                        &format!("Sending connection acknowledgment to peer: {}", peer_id),
-                        None,
-                    );
-                    if let Err(e) = send_message_to_peer(
-                        &mut writer,
-                        &PeerMessage::ConnectionAck {
-                            peer_id: peer_id.clone(),
-                            leader_id: leader_id.clone(),
-                        },
-                    )
-                    .await
-                    {
-                        CliOutput::log(
-                            &format!("Failed to send acknowledgement to peer {}: {}", peer_id, e)
-                                .bright_red()
-                                .bold(),
-                            None,
-                        );
-                        return;
-                    }
-                    CliOutput::log(&format!("Acknowledgement sent to peer: {}", peer_id), None);
-
                     // Add peer to connection manager
-                    CliOutput::log(
-                        &format!(
-                            "Adding peer to connection manager and peers config: {}",
-                            peer_id
-                        ),
-                        None,
-                    );
-
                     connection_manager
                         .add_connection(peer_id.clone(), writer)
                         .await;
 
-                    // Add peer to connected peers list
-                    if let Err(e) = peers_config
-                        .add_peer(format!("{}:{}", peer_addr.port(), peer_id))
-                        .await
+                    // Acknowledge peer connection
+                    if let Err(e) = acknowledge_peer(
+                        Arc::clone(&connection_manager),
+                        peer_id.clone(),
+                        leader_id.clone(),
+                    )
+                    .await
                     {
-                        CliOutput::error(&format!("Failed to add peer to config: {}", e), None);
+                        CliOutput::log(&format!("Failed to acknowledge peer: {}", e).red(), None);
                     }
 
-                    // Notify all other peers about the new peer
-                    {
-                        let peers_changed_message = PeerMessage::PeerListUpdate {
-                            peers: peers_config.config().await.peers.clone(),
-                        };
+                    // Add peer to peers config
+                    if let Err(e) = peers_config.add_peer(peer_id.clone()).await {
+                        CliOutput::log(&format!("Failed to add peer to config: {}", e).red(), None);
+                    }
 
-                        // Broadcast to all existing peers (except the new one)
+                    // Broadcast peer config to all other peers
+                    if let Err(failed_peers) = broadcast_peer_list(
+                        Arc::clone(&connection_manager),
+                        peers_config.config().await.peers.clone(),
+                    )
+                    .await
+                    {
                         CliOutput::log(
-                            &format!(
-                                "Notifying {} existing peers about new peer {}",
-                                connection_manager.connection_count().await,
-                                peer_id
-                            ),
+                            &format!("Failed to broadcast peer list to peers: {:?}", failed_peers)
+                                .red(),
                             None,
                         );
-
-                        connection_manager
-                            .broadcast_message(&peers_changed_message)
-                            .await;
                     }
 
                     // Handle incoming messages from this peer
@@ -162,8 +131,9 @@ async fn main() -> std::io::Result<()> {
                                 // Handle different message types here
                             }
                             Err(e) => {
-                                CliOutput::error(
-                                    &format!("Error receiving message from {}: {}", peer_id, e),
+                                CliOutput::log(
+                                    &format!("Error receiving message from {}: {}", peer_id, e)
+                                        .red(),
                                     None,
                                 );
                                 break;
@@ -172,43 +142,33 @@ async fn main() -> std::io::Result<()> {
                     }
 
                     // Remove peer from connection manager and peers config when connection is lost
-                    CliOutput::log(&format!("Peer {} disconnected", peer_id), None);
+                    CliOutput::log(&format!("Peer {} disconnected", peer_id).red(), None);
+
+                    // Remove peer from connection manager
+                    connection_manager.remove_connection(&peer_id).await;
+
+                    // Remove peer from peers config
+                    if let Err(e) = peers_config.remove_peer(&peer_id).await {
+                        CliOutput::log(
+                            &format!("Failed to remove peer {} from config: {}", peer_id, e)
+                                .bright_red()
+                                .bold(),
+                            None,
+                        );
+                    }
+
+                    // Broadcast peer config to all other peers
+                    if let Err(failed_peers) = broadcast_peer_list(
+                        connection_manager,
+                        peers_config.config().await.peers.clone(),
+                    )
+                    .await
                     {
                         CliOutput::log(
-                            &format!(
-                                "Removing peer {} from connection manager and peers config",
-                                peer_id
-                            ),
+                            &format!("Failed to broadcast peer list to peers: {:?}", failed_peers)
+                                .red(),
                             None,
                         );
-                        connection_manager.remove_connection(&peer_id).await;
-                        if let Err(e) = peers_config
-                            .remove_peer(format!("{}:{}", peer_addr.port(), peer_id).as_str())
-                            .await
-                        {
-                            CliOutput::log(
-                                &format!("Failed to remove peer {} from config: {}", peer_id, e)
-                                    .bright_red()
-                                    .bold(),
-                                None,
-                            );
-                        }
-
-                        CliOutput::log(
-                            &format!(
-                                "Notifying {} existing peers about new peer {}",
-                                connection_manager.connection_count().await,
-                                peer_id
-                            ),
-                            None,
-                        );
-
-                        let peers_changed_message = PeerMessage::PeerListUpdate {
-                            peers: peers_config.config().await.peers.clone(),
-                        };
-                        connection_manager
-                            .broadcast_message(&peers_changed_message)
-                            .await;
                     }
                 });
             }

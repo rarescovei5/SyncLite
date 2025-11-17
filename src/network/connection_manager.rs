@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::net::tcp::OwnedWriteHalf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
-use crate::utils::output::CliOutput;
-
-use super::peer_messaging::{PeerMessage, send_message_to_peer};
+use crate::{network::PeerMessage, utils::output::CliOutput};
 
 /// Manages active connections to all peers
 #[derive(Clone)]
@@ -43,15 +42,20 @@ impl PeerConnectionManager {
     }
 
     /// Send a message to a specific peer
-    pub async fn send_to_peer(&self, peer_id: &str, message: &PeerMessage) -> Result<(), String> {
+    pub async fn send_to_peer(
+        &self,
+        peer_id: &str,
+        message: &PeerMessage,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut connections = self.connections.lock().await;
 
         if let Some(writer) = connections.get_mut(peer_id) {
             send_message_to_peer(writer, message)
                 .await
-                .map_err(|e| format!("Failed to send message to peer {}: {}", peer_id, e))
+                .map_err(|e| format!("Failed to send message to peer {}: {}", peer_id, e))?;
+            Ok(())
         } else {
-            Err(format!("No active connection to peer {}", peer_id))
+            Err(format!("No active connection to peer {}", peer_id).into())
         }
     }
 
@@ -68,6 +72,7 @@ impl PeerConnectionManager {
         // Collect peer IDs to avoid borrowing issues
         let peer_ids: Vec<String> = connections.keys().cloned().collect();
 
+        // Send messages while holding the lock (avoid recursive lock)
         for peer_id in peer_ids {
             if let Some(writer) = connections.get_mut(&peer_id) {
                 if let Err(e) = send_message_to_peer(writer, message).await {
@@ -113,6 +118,7 @@ impl PeerConnectionManager {
             .cloned()
             .collect();
 
+        // Send messages while holding the lock (avoid recursive lock)
         for peer_id in peer_ids {
             if let Some(writer) = connections.get_mut(&peer_id) {
                 if let Err(e) = send_message_to_peer(writer, message).await {
@@ -160,4 +166,40 @@ impl Default for PeerConnectionManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// Helper functions for sending and receiving messages
+
+// Send message to a peer
+pub async fn send_message_to_peer(
+    writer: &mut OwnedWriteHalf,
+    message: &PeerMessage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let serialized = serde_json::to_string(message)?;
+    let message_bytes = serialized.as_bytes();
+    let length = message_bytes.len() as u32;
+
+    // Send length prefix followed by message
+    writer.write_u32(length).await?;
+    writer.write_all(message_bytes).await?;
+    writer.flush().await?;
+
+    Ok(())
+}
+
+// Receive message from a peer
+pub async fn receive_message_from_peer(
+    reader: &mut OwnedReadHalf,
+) -> Result<PeerMessage, Box<dyn std::error::Error>> {
+    // Read length prefix
+    let length = reader.read_u32().await?;
+
+    // Read message
+    let mut message_bytes = vec![0u8; length as usize];
+    reader.read_exact(&mut message_bytes).await?;
+
+    let message_str = String::from_utf8(message_bytes)?;
+    let message: PeerMessage = serde_json::from_str(&message_str)?;
+
+    Ok(message)
 }

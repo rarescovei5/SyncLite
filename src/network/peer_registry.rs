@@ -12,12 +12,6 @@ pub async fn acknowledge_peer(
     peer_id: String,
     leader_id: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Send connection acknowledgment with peer ID
-    CliOutput::log(
-        &format!("Sending connection acknowledgment to peer: {}", peer_id),
-        None,
-    );
-
     connection_manager
         .send_to_peer(
             &peer_id,
@@ -28,7 +22,6 @@ pub async fn acknowledge_peer(
         )
         .await?;
 
-    CliOutput::log(&format!("Successfully registered peer: {}", peer_id), None);
     Ok(())
 }
 

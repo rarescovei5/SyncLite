@@ -10,13 +10,9 @@ pub fn parse_args() -> Result<CliArguments, Box<dyn std::error::Error>> {
     let command: Command = match args.next().as_deref() {
         Some("serve") => Command::Serve,
         Some("connect") => Command::Connect,
-        Some("help" | "-h" | "--help") => {
-            CliOutput::banner();
+        _ => {
             CliOutput::usage();
             std::process::exit(0);
-        }
-        _ => {
-            std::process::exit(1);
         }
     };
 

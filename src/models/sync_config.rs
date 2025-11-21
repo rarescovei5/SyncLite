@@ -1,17 +1,39 @@
-use super::{FileEntry, SyncState};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub struct PersistentSyncState {
+use crate::utils::write_json;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub hash: Option<String>,
+    pub is_deleted: bool,
+    pub last_modified: DateTime<Utc>,
+}
+
+impl FileEntry {
+    pub fn delete(self) -> Self {
+        Self {
+            hash: None,
+            is_deleted: true,
+            last_modified: self.last_modified,
+        }
+    }
+}
+
+pub type SyncState = HashMap<String, FileEntry>;
+
+pub struct SyncConfig {
     state: Arc<Mutex<SyncState>>,
     storage_path: std::path::PathBuf,
     auto_save: Arc<Mutex<bool>>,
 }
 
-impl PersistentSyncState {
-    pub fn new(state: SyncState, storage_path: impl AsRef<Path>) -> Self {
+impl SyncConfig {
+    pub fn new(storage_path: impl AsRef<Path>, state: SyncState) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             storage_path: storage_path.as_ref().to_path_buf(),
@@ -20,7 +42,7 @@ impl PersistentSyncState {
     }
 
     /// Create with auto-save disabled (useful for batch operations)
-    pub fn new_no_auto_save(state: SyncState, storage_path: impl AsRef<Path>) -> Self {
+    pub fn new_no_auto_save(storage_path: impl AsRef<Path>, state: SyncState) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             storage_path: storage_path.as_ref().to_path_buf(),
@@ -35,10 +57,10 @@ impl PersistentSyncState {
     }
 
     /// Add or update a file entry and auto-save
-    pub async fn add_file(&self, path: String, hash: String) -> Result<(), String> {
+    pub async fn add_file(&self, path: String, file_entry: FileEntry) -> Result<(), String> {
         {
             let mut state = self.state.lock().await;
-            state.add_file(path, hash);
+            state.insert(path, file_entry);
         }
         let auto_save = *self.auto_save.lock().await;
         if auto_save { self.save().await } else { Ok(()) }
@@ -48,7 +70,14 @@ impl PersistentSyncState {
     pub async fn delete_file(&self, path: &str) -> Result<(), String> {
         {
             let mut state = self.state.lock().await;
-            state.delete_file(path);
+            state.insert(
+                path.to_string(),
+                FileEntry {
+                    hash: None,
+                    is_deleted: true,
+                    last_modified: Utc::now(),
+                },
+            );
         }
         let auto_save = *self.auto_save.lock().await;
         if auto_save { self.save().await } else { Ok(()) }
@@ -58,17 +87,14 @@ impl PersistentSyncState {
     pub async fn update_file(&self, path: &str, new_hash: String) -> Result<(), String> {
         {
             let mut state = self.state.lock().await;
-            state.update_file(path, new_hash);
-        }
-        let auto_save = *self.auto_save.lock().await;
-        if auto_save { self.save().await } else { Ok(()) }
-    }
-
-    /// Remove a file entry completely and auto-save
-    pub async fn remove_file(&self, path: &str) -> Result<(), String> {
-        {
-            let mut state = self.state.lock().await;
-            state.remove_file(path);
+            state.insert(
+                path.to_string(),
+                FileEntry {
+                    hash: Some(new_hash),
+                    is_deleted: false,
+                    last_modified: Utc::now(),
+                },
+            );
         }
         let auto_save = *self.auto_save.lock().await;
         if auto_save { self.save().await } else { Ok(()) }
@@ -119,32 +145,37 @@ impl PersistentSyncState {
     /// Get specific file entry
     pub async fn get_file(&self, path: &str) -> Option<FileEntry> {
         let state = self.state.lock().await;
-        state.get_file(path).cloned()
+        state.get(path).cloned()
     }
 
     /// Check if a file exists and is not deleted
     pub async fn file_exists(&self, path: &str) -> bool {
         let state = self.state.lock().await;
-        state.file_exists(path)
+        state
+            .get(path)
+            .map(|entry| !entry.is_deleted)
+            .unwrap_or(false)
     }
 
     /// Get the number of files in the state
     pub async fn file_count(&self) -> usize {
         let state = self.state.lock().await;
-        state.files.len()
+        state.len()
     }
 
     /// Manually save the current state to disk
     pub async fn save(&self) -> Result<(), String> {
         let state = self.state.lock().await;
-        crate::storage::write_json(&self.storage_path.join("state.json"), &*state)
+        write_json(&self.storage_path.join("state.json"), &*state)
     }
 
     /// Force a refresh of last_sync timestamp and save
     pub async fn touch(&self) -> Result<(), String> {
         {
             let mut state = self.state.lock().await;
-            state.last_sync = Utc::now();
+            for entry in state.values_mut() {
+                entry.last_modified = Utc::now();
+            }
         }
         let auto_save = *self.auto_save.lock().await;
         if auto_save { self.save().await } else { Ok(()) }

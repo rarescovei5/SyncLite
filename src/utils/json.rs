@@ -1,6 +1,6 @@
-use crate::models::{PeersConfig, SyncState};
+use crate::models::{FileEntry, PeersState};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 /// Generic JSON write operation
 pub fn write_json<T: Serialize>(path: &Path, data: &T) -> Result<(), String> {
@@ -20,32 +20,20 @@ pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String>
         .map_err(|e| format!("Failed to parse JSON from {}: {}", path.display(), e))
 }
 
-/// Helper to write peers config to the standard location
-pub fn write_peers_config(storage_dir: &Path, config: &PeersConfig) -> Result<(), String> {
-    let peers_file = storage_dir.join("peers.json");
-    write_json(&peers_file, config)
-}
-
 /// Helper to read peers config from the standard location
-pub fn read_peers_config(storage_dir: &Path) -> PeersConfig {
+pub fn read_peers_state(storage_dir: &Path) -> PeersState {
     let peers_file = storage_dir.join("peers.json");
     match read_json(&peers_file) {
-        Ok(config) => config,
-        Err(_) => PeersConfig::new(),
+        Ok(state) => state,
+        Err(_) => PeersState::new(),
     }
 }
 
-/// Helper to write sync state to the standard location
-pub fn write_sync_state(storage_dir: &Path, state: &SyncState) -> Result<(), String> {
-    let state_file = storage_dir.join("state.json");
-    write_json(&state_file, state)
-}
-
 /// Helper to read sync state from the standard location
-pub fn read_sync_state(storage_dir: &Path) -> SyncState {
+pub fn read_sync_state(storage_dir: &Path) -> HashMap<String, FileEntry> {
     let state_file = storage_dir.join("state.json");
     match read_json(&state_file) {
         Ok(state) => state,
-        Err(_) => SyncState::new(),
+        Err(_) => HashMap::new(),
     }
 }

@@ -1,18 +1,17 @@
 use crate::{
     app,
-    models::{PeersConfig, SyncState},
-    storage::{write_peers_config, write_sync_state},
-    utils::{confirm, output::CliOutput, unwrap_or_exit},
+    models::{PeersConfig, PeersState, SyncConfig},
+    utils::{confirm, output::CliOutput},
 };
 
 use colored::Colorize;
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 /// Initialize storage in the specified directory
-pub fn initialise_storage(path: &Path) {
+pub async fn initialise_storage(path: &Path) -> Result<(), String> {
     CliOutput::wrench("Checking Directory Status:".bright_yellow(), None);
 
-    unwrap_or_exit(validate_path(path));
+    validate_path(path)?;
 
     let storage_dir = path.join(".synclite");
 
@@ -20,9 +19,9 @@ pub fn initialise_storage(path: &Path) {
         CliOutput::info(".synclite folder detected", Some(5));
     } else {
         CliOutput::info("No .synclite folder detected", Some(5));
-        unwrap_or_exit(check_conflicts_and_cleanup(path));
-        unwrap_or_exit(prompt_directory_creation());
-        unwrap_or_exit(create_storage_directory(&storage_dir));
+        check_conflicts_and_cleanup(path)?;
+        prompt_directory_creation()?;
+        create_storage_directory(&storage_dir)?;
     }
 
     print!("\n");
@@ -30,8 +29,10 @@ pub fn initialise_storage(path: &Path) {
         "Checking contents of .synclite folder:".bright_yellow(),
         None,
     );
-    unwrap_or_exit(create_storage_files(&storage_dir));
-    unwrap_or_exit(register_directory(path));
+    create_storage_files(&storage_dir).await?;
+    register_directory(path)?;
+
+    Ok(())
 }
 
 /// Validate that the provided path exists and is a directory
@@ -122,7 +123,7 @@ fn create_storage_directory(storage_dir: &Path) -> Result<(), String> {
 }
 
 /// Create configuration files (peers.json and state.json) if they do not exist
-fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
+async fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
     // Create the peers file
     if !storage_dir.join("peers.json").exists() {
         CliOutput::info(
@@ -132,6 +133,8 @@ fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
             ),
             Some(5),
         );
+        let peers_config = PeersConfig::new(storage_dir, PeersState::new());
+        peers_config.save().await?;
     } else {
         CliOutput::info(
             &format!(
@@ -142,14 +145,8 @@ fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
         );
     }
 
-    let peers_config = PeersConfig::new();
-    write_peers_config(storage_dir, &peers_config)?;
-
     // Create the state file
     if !storage_dir.join("state.json").exists() {
-        let state_config = SyncState::new();
-        write_sync_state(storage_dir, &state_config)?;
-
         CliOutput::info(
             &format!(
                 "Creating state.json file at: {}",
@@ -157,6 +154,8 @@ fn create_storage_files(storage_dir: &Path) -> Result<(), String> {
             ),
             Some(5),
         );
+        let state_config = SyncConfig::new(storage_dir, HashMap::new());
+        state_config.save().await?;
     } else {
         CliOutput::info(
             &format!(

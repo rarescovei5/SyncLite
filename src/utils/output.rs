@@ -62,13 +62,10 @@ impl CliOutput {
 
     pub fn log(message: impl Display, padding_left: Option<usize>) {
         let pad = " ".repeat(padding_left.unwrap_or(0));
+        let time_str = Utc::now().time().to_string();
+        let time = &time_str[..13];
 
-        println!(
-            "{}[{}]: {}",
-            pad,
-            Utc::now().time().to_string().bright_black().bold(),
-            message
-        );
+        println!("{}[{}]: {}", pad, time.bright_black().bold(), message);
     }
 
     pub fn wrench(message: impl Display, padding_left: Option<usize>) {

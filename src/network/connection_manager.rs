@@ -1,10 +1,11 @@
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
-use crate::{network::PeerMessage, utils::output::CliOutput};
+use crate::{network::ServerMessage, utils::output::CliOutput};
 
 /// Manages active connections to all peers
 #[derive(Clone)]
@@ -45,22 +46,28 @@ impl PeerConnectionManager {
     pub async fn send_to_peer(
         &self,
         peer_id: &str,
-        message: &PeerMessage,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        message: &ServerMessage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut connections = self.connections.lock().await;
 
         if let Some(writer) = connections.get_mut(peer_id) {
-            send_message_to_peer(writer, message)
-                .await
-                .map_err(|e| format!("Failed to send message to peer {}: {}", peer_id, e))?;
+            send_message_to_peer(writer, message).await.map_err(
+                |e| -> Box<dyn std::error::Error + Send + Sync> {
+                    format!("Failed to send message to peer {}: {}", peer_id, e).into()
+                },
+            )?;
             Ok(())
         } else {
-            Err(format!("No active connection to peer {}", peer_id).into())
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No active connection to peer {}", peer_id),
+            )
+            .into())
         }
     }
 
     /// Broadcast a message to all connected peers
-    pub async fn broadcast_message(&self, message: &PeerMessage) -> Vec<String> {
+    pub async fn broadcast_message(&self, message: &ServerMessage) -> Vec<String> {
         let connection_count = self.connection_count().await;
         if connection_count == 0 {
             return Vec::new();
@@ -100,7 +107,7 @@ impl PeerConnectionManager {
     /// Broadcast a message to all peers except the ones in the exclude list (useful for forwarding)
     pub async fn broadcast_except(
         &self,
-        message: &PeerMessage,
+        message: &ServerMessage,
         exclude_peer: Vec<String>,
     ) -> Vec<String> {
         let connection_count = self.connection_count().await;
@@ -171,10 +178,10 @@ impl Default for PeerConnectionManager {
 // Helper functions for sending and receiving messages
 
 // Send message to a peer
-pub async fn send_message_to_peer(
+pub async fn send_message_to_peer<T: Serialize>(
     writer: &mut OwnedWriteHalf,
-    message: &PeerMessage,
-) -> Result<(), Box<dyn std::error::Error>> {
+    message: &T,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let serialized = serde_json::to_string(message)?;
     let message_bytes = serialized.as_bytes();
     let length = message_bytes.len() as u32;
@@ -188,9 +195,9 @@ pub async fn send_message_to_peer(
 }
 
 // Receive message from a peer
-pub async fn receive_message_from_peer(
+pub async fn receive_message_from_peer<T: DeserializeOwned>(
     reader: &mut OwnedReadHalf,
-) -> Result<PeerMessage, Box<dyn std::error::Error>> {
+) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
     // Read length prefix
     let length = reader.read_u32().await?;
 
@@ -199,7 +206,7 @@ pub async fn receive_message_from_peer(
     reader.read_exact(&mut message_bytes).await?;
 
     let message_str = String::from_utf8(message_bytes)?;
-    let message: PeerMessage = serde_json::from_str(&message_str)?;
+    let message: T = serde_json::from_str(&message_str)?;
 
     Ok(message)
 }

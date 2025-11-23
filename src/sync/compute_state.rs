@@ -71,7 +71,7 @@ pub fn compute_sync_state(
     Ok(())
 }
 
-fn calculate_file_hash(path: &Path) -> Result<String, String> {
+pub fn calculate_file_hash(path: &Path) -> Result<String, String> {
     let contents =
         fs::read(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
 

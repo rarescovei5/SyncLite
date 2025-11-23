@@ -15,7 +15,7 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    pub fn delete(self) -> Self {
+    pub fn deleted(&self) -> Self {
         Self {
             hash: None,
             is_deleted: true,

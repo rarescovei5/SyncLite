@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    network::{PeerConnectionManager, PeerMessage},
+    network::{PeerConnectionManager, ServerMessage},
     utils::output::CliOutput,
 };
 
@@ -11,11 +11,11 @@ pub async fn acknowledge_peer(
     connection_manager: Arc<PeerConnectionManager>,
     peer_id: String,
     leader_id: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     connection_manager
         .send_to_peer(
             &peer_id,
-            &PeerMessage::ConnectionAck {
+            &ServerMessage::ConnectionAck {
                 peer_id: peer_id.clone(),
                 leader_id,
             },
@@ -29,7 +29,7 @@ pub async fn broadcast_peer_list(
     connection_manager: Arc<PeerConnectionManager>,
     peers: Vec<String>,
 ) -> Result<(), Vec<String>> {
-    let peers_changed_message = PeerMessage::PeerListUpdate { peers };
+    let peers_changed_message = ServerMessage::PeerListUpdate { peers };
 
     // Broadcast to all existing peers (except the new one)
     CliOutput::log(

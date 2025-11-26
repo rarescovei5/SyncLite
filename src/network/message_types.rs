@@ -15,6 +15,7 @@ pub enum ServerMessage {
     FileContentRequestWithVersion {
         my_winning_files: HashMap<String, String>, // files with their content that server is sending
         request_files: Vec<String>,                // files that server wants from peer
+        files_to_delete: Vec<String>,              // files that server wants to delete from peer
     },
 
     // Broadcast Messages
@@ -22,7 +23,8 @@ pub enum ServerMessage {
         peers: Vec<String>,
     },
     FileUpdatePush {
-        version: HashMap<String, String>,
+        files_to_write: HashMap<String, String>,
+        files_to_delete: Vec<String>,
     },
     FileDeletionPush {
         files: Vec<String>,

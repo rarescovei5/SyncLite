@@ -359,19 +359,18 @@ async fn main() -> std::io::Result<()> {
                                         let (
                                             our_winning_files,
                                             their_winning_files,
-                                            files_to_delete,
+                                            files_to_delete_from_server,
+                                            files_to_delete_from_peer,
                                         ) = determine_winning_files(
                                             &server_sync_state,
                                             &peer_sync_state,
                                         );
 
                                         // Handle file deletions first
-                                        if !files_to_delete.is_empty() {
+                                        if !files_to_delete_from_server.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
 
-                                            for path in &files_to_delete {
-                                                let full_path = workspace_path.join(path);
-
+                                            for path in &files_to_delete_from_server {
                                                 CliOutput::log(
                                                     &format!(
                                                         "Deleting workspace file: {} ({})",
@@ -380,49 +379,27 @@ async fn main() -> std::io::Result<()> {
                                                     .bright_red(),
                                                     None,
                                                 );
+                                            }
 
-                                                if let Err(e) = workspace_file_system
-                                                    .delete_file(&full_path)
-                                                    .await
-                                                {
-                                                    CliOutput::log(
-                                                        &format!("Failed to delete file from file system: {}", e)
-                                                            .red(),
-                                                        None,
-                                                    );
-                                                }
+                                            // Unified filesystem + state delete operation
+                                            if let Err(e) = sync_config
+                                                .sync_batch_delete_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &files_to_delete_from_server,
+                                                    Some(&peer_sync_state),
+                                                )
+                                                .await
+                                            {
+                                                CliOutput::log(
+                                                    &format!("Failed to delete files: {}", e).red(),
+                                                    None,
+                                                );
                                             }
 
                                             // Small delay to ensure file watcher events are processed
                                             tokio::time::sleep(Duration::from_millis(100)).await;
                                             ignore_file_events.store(false, Ordering::Relaxed);
-
-                                            // Update sync state for deleted files
-                                            if let Err(e) = sync_config
-                                                .batch_operations(|state| {
-                                                    for file in &files_to_delete {
-                                                        if let Some(file_entry) =
-                                                            state.get_mut(file)
-                                                        {
-                                                            file_entry.is_deleted = true;
-                                                            file_entry.hash = None;
-                                                            file_entry.last_modified =
-                                                                peer_sync_state
-                                                                    .get(file)
-                                                                    .map(|e| e.last_modified)
-                                                                    .unwrap_or_else(|| {
-                                                                        chrono::Utc::now()
-                                                                    });
-                                                        }
-                                                    }
-                                                })
-                                                .await
-                                            {
-                                                CliOutput::log(
-                                                    &format!("Failed to delete files from sync state: {}", e).red(),
-                                                    None,
-                                                );
-                                            }
                                         }
 
                                         // STEP 3: Send our winning files with content and request their winning files
@@ -482,6 +459,7 @@ async fn main() -> std::io::Result<()> {
                                                     &ServerMessage::FileContentRequestWithVersion {
                                                         my_winning_files:
                                                             my_winning_files_with_content,
+                                                        files_to_delete: files_to_delete_from_peer,
                                                         request_files: their_winning_files,
                                                     },
                                                 )
@@ -511,10 +489,7 @@ async fn main() -> std::io::Result<()> {
                                         if !files.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
 
-                                            for (path, content) in &files {
-                                                // path is relative to workspace_path
-                                                // 1. Write file to disk (convert to absolute path)
-
+                                            for (path, _) in &files {
                                                 CliOutput::log(
                                                     &format!(
                                                         "Creating workspace file: {} ({})",
@@ -524,56 +499,21 @@ async fn main() -> std::io::Result<()> {
                                                     .bold(),
                                                     None,
                                                 );
+                                            }
 
-                                                let full_path = workspace_path.join(path);
-                                                if let Some(parent) = full_path.parent() {
-                                                    if let Err(e) = workspace_file_system
-                                                        .create_directory(parent)
-                                                        .await
-                                                    {
-                                                        CliOutput::log(
-                                                            &format!("Failed to create directory for workspace file {}: {}", path, e).red(),
-                                                            None,
-                                                        );
-                                                        continue;
-                                                    }
-                                                }
-
+                                            // Unified filesystem + state write operation
+                                            if let Err(e) = sync_config
+                                                .sync_batch_write_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &files,
+                                                )
+                                                .await
+                                            {
                                                 CliOutput::log(
-                                                    &format!(
-                                                        "Writing contents to workspace file: {} ({})",
-                                                        path, peer_id
-                                                    )
-                                                    .yellow(),
+                                                    &format!("Failed to write files: {}", e).red(),
                                                     None,
                                                 );
-
-                                                if let Err(e) = workspace_file_system
-                                                    .write_file(&full_path, content)
-                                                    .await
-                                                {
-                                                    CliOutput::log(
-                                                        &format!(
-                                                            "Failed to write contents to workspace file {}: {}",
-                                                            path, e
-                                                        )
-                                                        .red(),
-                                                        None,
-                                                    );
-                                                    continue;
-                                                }
-
-                                                // 2. Calculate hash and update sync_config (using relative path)
-                                                if let Ok(hash) = calculate_file_hash(&full_path) {
-                                                    if let Err(e) =
-                                                        sync_config.update_file(path, hash).await
-                                                    {
-                                                        CliOutput::log(
-                                                            &format!("Failed to update sync state for {}: {}", path, e).red(),
-                                                            None,
-                                                        );
-                                                    }
-                                                }
                                             }
 
                                             // Small delay to ensure file watcher events are processed
@@ -584,7 +524,8 @@ async fn main() -> std::io::Result<()> {
                                             let failed_peers = connection_manager
                                                 .broadcast_except(
                                                     &ServerMessage::FileUpdatePush {
-                                                        version: files.clone(),
+                                                        files_to_write: files.clone(),
+                                                        files_to_delete: Vec::new(),
                                                     },
                                                     vec![peer_id.clone()],
                                                 )
@@ -784,6 +725,7 @@ async fn main() -> std::io::Result<()> {
                                     ServerMessage::FileContentRequestWithVersion {
                                         my_winning_files: server_winning_files,
                                         request_files,
+                                        files_to_delete,
                                     } => {
                                         CliOutput::log(
                                             &format!(
@@ -794,65 +736,56 @@ async fn main() -> std::io::Result<()> {
                                             None,
                                         );
 
+                                        // Handle file deletions first
+                                        if !files_to_delete.is_empty() {
+                                            for path in &files_to_delete {
+                                                CliOutput::log(
+                                                    &format!("Deleting workspace file: {}", path)
+                                                        .bright_red(),
+                                                    None,
+                                                );
+                                            }
+
+                                            // Unified filesystem + state delete operation
+                                            if let Err(e) = sync_config
+                                                .sync_batch_delete_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &files_to_delete,
+                                                    None,
+                                                )
+                                                .await
+                                            {
+                                                CliOutput::log(
+                                                    &format!("Failed to delete files: {}", e).red(),
+                                                    None,
+                                                );
+                                            }
+                                        }
+
                                         // Apply server's winning files to our file system
                                         if !server_winning_files.is_empty() {
-                                            for (path, content) in &server_winning_files {
+                                            for (path, _) in &server_winning_files {
                                                 CliOutput::log(
                                                     &format!("Creating workspace file: {}", path)
                                                         .green(),
                                                     None,
                                                 );
-                                                // path is relative to workspace_path
-                                                // Convert to absolute path for file operations
-                                                let full_path = workspace_path.join(path);
-                                                if let Some(parent) = full_path.parent() {
-                                                    if let Err(e) = workspace_file_system
-                                                        .create_directory(parent)
-                                                        .await
-                                                    {
-                                                        CliOutput::log(
-                                                            &format!("Failed to create directory for {}: {}", path, e).red(),
-                                                            None,
-                                                        );
-                                                        continue;
-                                                    }
-                                                }
+                                            }
 
+                                            // Unified filesystem + state write operation
+                                            if let Err(e) = sync_config
+                                                .sync_batch_write_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &server_winning_files,
+                                                )
+                                                .await
+                                            {
                                                 CliOutput::log(
-                                                    &format!(
-                                                        "Writing contents to workspace file: {}",
-                                                        path
-                                                    )
-                                                    .yellow(),
+                                                    &format!("Failed to write files: {}", e).red(),
                                                     None,
                                                 );
-
-                                                if let Err(e) = workspace_file_system
-                                                    .write_file(&full_path, content)
-                                                    .await
-                                                {
-                                                    CliOutput::log(
-                                                        &format!(
-                                                            "Failed to write file {}: {}",
-                                                            path, e
-                                                        )
-                                                        .red(),
-                                                        None,
-                                                    );
-                                                    continue;
-                                                }
-
-                                                // Update sync config (using relative path)
-                                                if let Ok(hash) = calculate_file_hash(&full_path) {
-                                                    if let Err(e) =
-                                                        sync_config.update_file(path, hash).await
-                                                    {
-                                                        CliOutput::log(
-                                                            &format!("Failed to update sync state for {}: {}", path, e).red(),
-                                                            None,
-                                                        );
-                                                    }
-                                                }
                                             }
                                         }
 
@@ -901,18 +834,58 @@ async fn main() -> std::io::Result<()> {
                                         }
                                     }
 
-                                    ServerMessage::FileUpdatePush { version: _version } => {
+                                    ServerMessage::FileUpdatePush {
+                                        files_to_write,
+                                        files_to_delete,
+                                    } => {
                                         // Server is pushing updated files to us
-                                        // for (path, content) in version {
-                                        //     // 1. Write file to disk
-                                        //     let full_path = workspace_path.join(&path);
-                                        //     tokio::fs::create_dir_all(full_path.parent()?).await.ok()?;
-                                        //     tokio::fs::write(&full_path, &content).await.ok()?;
-                                        //
-                                        //     // 2. Calculate hash and update sync_config
-                                        //     let hash = calculate_hash(&content);
-                                        //     sync_config.update_file(&path, hash).await.ok()?;
-                                        // }
+                                        if !files_to_write.is_empty() {
+                                            for (path, _) in &files_to_write {
+                                                CliOutput::log(
+                                                    &format!("Writing workspace file: {}", path)
+                                                        .green(),
+                                                    None,
+                                                );
+                                            }
+
+                                            if let Err(e) = sync_config
+                                                .sync_batch_write_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &files_to_write,
+                                                )
+                                                .await
+                                            {
+                                                CliOutput::log(
+                                                    &format!("Failed to write files: {}", e).red(),
+                                                    None,
+                                                );
+                                            }
+                                        }
+
+                                        if !files_to_delete.is_empty() {
+                                            for path in &files_to_delete {
+                                                CliOutput::log(
+                                                    &format!("Deleting workspace file: {}", path)
+                                                        .bright_red(),
+                                                    None,
+                                                );
+                                            }
+                                            if let Err(e) = sync_config
+                                                .sync_batch_delete_files(
+                                                    &workspace_file_system,
+                                                    &workspace_path,
+                                                    &files_to_delete,
+                                                    None,
+                                                )
+                                                .await
+                                            {
+                                                CliOutput::log(
+                                                    &format!("Failed to delete files: {}", e).red(),
+                                                    None,
+                                                );
+                                            }
+                                        }
 
                                         CliOutput::log("Received file updates from server", None);
                                     }

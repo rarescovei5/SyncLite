@@ -1,10 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::sandboxed::FileSystem;
+use crate::sync::calculate_file_hash;
 use crate::utils::write_json;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -179,5 +181,160 @@ impl SyncConfig {
         }
         let auto_save = *self.auto_save.lock().await;
         if auto_save { self.save().await } else { Ok(()) }
+    }
+
+    // ===== UNIFIED FILESYSTEM + STATE METHODS =====
+    // These methods keep filesystem and sync state in sync automatically
+
+    /// Write a file to disk AND update sync state (unified operation)
+    ///
+    /// # Arguments
+    /// * `fs` - FileSystem reference for sandboxed operations
+    /// * `workspace_path` - Absolute path to workspace root
+    /// * `relative_path` - Relative path from workspace root
+    /// * `content` - File content to write
+    pub async fn sync_write_file(
+        &self,
+        fs: &FileSystem,
+        workspace_path: &Path,
+        relative_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let full_path = workspace_path.join(relative_path);
+
+        // Create parent directory if needed
+        if let Some(parent) = full_path.parent() {
+            fs.create_directory(parent)
+                .await
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+
+        // Write file to filesystem
+        fs.write_file(&full_path, content)
+            .await
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+
+        // Calculate hash and update state
+        let hash = calculate_file_hash(&full_path)
+            .map_err(|e| format!("Failed to calculate hash: {}", e))?;
+
+        self.update_file(relative_path, hash).await
+    }
+
+    /// Delete a file from disk AND mark as deleted in sync state (unified operation)
+    ///
+    /// # Arguments
+    /// * `fs` - FileSystem reference for sandboxed operations
+    /// * `workspace_path` - Absolute path to workspace root
+    /// * `relative_path` - Relative path from workspace root
+    pub async fn sync_delete_file(
+        &self,
+        fs: &FileSystem,
+        workspace_path: &Path,
+        relative_path: &str,
+    ) -> Result<(), String> {
+        let full_path = workspace_path.join(relative_path);
+
+        // Delete file from filesystem
+        fs.delete_file(&full_path)
+            .await
+            .map_err(|e| format!("Failed to delete file: {}", e))?;
+
+        // Mark as deleted in state
+        self.delete_file(relative_path).await
+    }
+
+    /// Write multiple files to disk AND update sync state (batch unified operation)
+    ///
+    /// # Arguments
+    /// * `fs` - FileSystem reference for sandboxed operations
+    /// * `workspace_path` - Absolute path to workspace root
+    /// * `files` - HashMap of relative paths to file contents
+    pub async fn sync_batch_write_files(
+        &self,
+        fs: &FileSystem,
+        workspace_path: &Path,
+        files: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        // Write all files to filesystem first
+        for (relative_path, content) in files {
+            let full_path = workspace_path.join(relative_path);
+
+            // Create parent directory if needed
+            if let Some(parent) = full_path.parent() {
+                fs.create_directory(parent).await.map_err(|e| {
+                    format!("Failed to create directory for {}: {}", relative_path, e)
+                })?;
+            }
+
+            // Write file
+            fs.write_file(&full_path, content)
+                .await
+                .map_err(|e| format!("Failed to write file {}: {}", relative_path, e))?;
+        }
+
+        // Update all state entries in a batch
+        self.batch_operations(|state| {
+            for (relative_path, _) in files {
+                let full_path = workspace_path.join(relative_path);
+                if let Ok(hash) = calculate_file_hash(&full_path) {
+                    state.insert(
+                        relative_path.clone(),
+                        FileEntry {
+                            hash: Some(hash),
+                            is_deleted: false,
+                            last_modified: Utc::now(),
+                        },
+                    );
+                }
+            }
+        })
+        .await
+    }
+
+    /// Delete multiple files from disk AND mark as deleted in sync state (batch unified operation)
+    ///
+    /// # Arguments
+    /// * `fs` - FileSystem reference for sandboxed operations
+    /// * `workspace_path` - Absolute path to workspace root
+    /// * `relative_paths` - List of relative paths to delete
+    /// * `peer_sync_state` - Optional peer state to copy timestamps from
+    pub async fn sync_batch_delete_files(
+        &self,
+        fs: &FileSystem,
+        workspace_path: &Path,
+        relative_paths: &[String],
+        peer_sync_state: Option<&SyncState>,
+    ) -> Result<(), String> {
+        // Delete all files from filesystem first
+        for relative_path in relative_paths {
+            let full_path = workspace_path.join(relative_path);
+            // Ignore errors if file doesn't exist
+            let _ = fs.delete_file(&full_path).await;
+        }
+
+        // Update all state entries in a batch
+        self.batch_operations(|state| {
+            for relative_path in relative_paths {
+                let last_modified = if let Some(peer_state) = peer_sync_state {
+                    peer_state
+                        .get(relative_path)
+                        .map(|e| e.last_modified)
+                        .unwrap_or_else(Utc::now)
+                } else {
+                    Utc::now()
+                };
+
+                state.insert(
+                    relative_path.clone(),
+                    FileEntry {
+                        hash: None,
+                        is_deleted: true,
+                        last_modified,
+                    },
+                );
+            }
+        })
+        .await
     }
 }

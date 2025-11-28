@@ -629,7 +629,8 @@ async fn main() -> std::io::Result<()> {
             }
         }
         Command::Connect => {
-            let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+            let ip = local_ip_address::local_ip().unwrap();
+            let addr = SocketAddr::new(ip, port);
             let Ok(stream) = TcpStream::connect(addr).await else {
                 Log::error(&format!("Failed to connect to: {}", addr.to_string()), None);
                 std::process::exit(1);

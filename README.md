@@ -131,6 +131,7 @@ Both server and peers watch their directories using the `notify` crate:
 ✅ **Tombstone Tracking**: Deleted files are marked, not removed from state  
 ✅ **Multi-peer Broadcasting**: Server forwards updates to all connected peers  
 ✅ **Sandboxed Operations**: Filesystem safety checks prevent escaping workspace
+✅ **Peer Discovery**: mDNS/UDP broadcast for automatic peer detection on LAN  
 
 ### **🚧 In Progress**
 
@@ -141,7 +142,6 @@ Both server and peers watch their directories using the `notify` crate:
 
 📋 **.syncignore System**: Git-like file exclusion patterns  
 📋 **Encryption**: TLS/SSL for secure transfers over internet  
-📋 **Peer Discovery**: mDNS/UDP broadcast for automatic peer detection on LAN  
 📋 **Compression**: File compression for large transfers  
 📋 **Bandwidth Throttling**: Limit sync speed to prevent network saturation
 

@@ -1,17 +1,13 @@
+use std::path::PathBuf;
+
 #[derive(Debug)]
 pub enum Command {
     Serve,
     Connect,
 }
 
-pub struct CliArguments {
+pub struct Args {
     pub command: Command,
-    pub path: String,
+    pub abs_workspace_path: PathBuf,
     pub port: u16,
-}
-
-// Utility Types
-#[derive(Debug, Copy, Clone)]
-pub enum FlagType {
-    Port,
 }

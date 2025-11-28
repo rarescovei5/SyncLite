@@ -5,7 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
-use crate::{network::ServerMessage, utils::output::CliOutput};
+use crate::{network::ServerMessage, utils::Log};
 
 /// Manages active connections to all peers
 #[derive(Clone)]
@@ -95,7 +95,7 @@ impl PeerConnectionManager {
         }
 
         if !failed_peers.is_empty() {
-            CliOutput::warning(
+            Log::warning(
                 &format!("Failed to notify {} peers", failed_peers.len()),
                 None,
             );
@@ -141,7 +141,7 @@ impl PeerConnectionManager {
         }
 
         if !failed_peers.is_empty() {
-            CliOutput::warning(
+            Log::warning(
                 &format!("Failed to notify {} peers", failed_peers.len()),
                 None,
             );

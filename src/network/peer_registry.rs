@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     network::{PeerConnectionManager, ServerMessage},
-    utils::output::CliOutput,
+    utils::Log,
 };
 
 /// Acknowledges a peer connection and registers it in the system
@@ -32,7 +32,7 @@ pub async fn broadcast_peer_list(
     let peers_changed_message = ServerMessage::PeerListUpdate { peers };
 
     // Broadcast to all existing peers (except the new one)
-    CliOutput::log(
+    Log::log(
         &format!(
             "Notifying {} existing peers about new peer list update.",
             connection_manager.connection_count().await,

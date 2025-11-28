@@ -4,21 +4,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::SyncState;
 
-// Messages sent by the server to peers
+// Messages sent by the **server** to peers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
-    // Single Messages
+    // Step 1: Server acknowledges connection
     ConnectionAck {
         peer_id: String,
         leader_id: String,
     },
-    FileContentRequestWithVersion {
-        my_winning_files: HashMap<String, String>, // files with their content that server is sending
-        request_files: Vec<String>,                // files that server wants from peer
-        files_to_delete: Vec<String>,              // files that server wants to delete from peer
+    // Step 3: Server sends the files to update and the files to delete and requests files it needs from the peer
+    InitialSyncPushResponse {
+        files_to_update: HashMap<String, String>,
+        files_to_delete: Vec<String>,
+        files_to_send_back: Vec<String>,
     },
 
-    // Broadcast Messages
+    // Other
     PeerListUpdate {
         peers: Vec<String>,
     },
@@ -26,15 +27,19 @@ pub enum ServerMessage {
         files_to_write: HashMap<String, String>,
         files_to_delete: Vec<String>,
     },
-    FileDeletionPush {
-        files: Vec<String>,
-    },
 }
 
-// Messages sent by peers to the server
+// Messages sent by **peers** to the server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PeerMessage {
-    // Single Messages
-    VersionPush { sync_state: SyncState }, // Step 1: peer sends their version
-    FileContentResponse { files: HashMap<String, String> }, // Step 4: peer sends their winning files
+    // Step 2: Peer sends their initial sync state
+    InitialSyncPush {
+        sync_state: SyncState,
+    },
+
+    // step 4: Peer sends the files back to the server and initial sync is complete
+    FileUpdatePush {
+        files_to_write: HashMap<String, String>,
+        files_to_delete: Vec<String>,
+    },
 }

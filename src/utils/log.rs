@@ -3,10 +3,10 @@ use colored::*;
 use std::fmt::Display;
 
 /// CLI output utilities with consistent styling
-pub struct CliOutput;
+pub struct Log;
 
 // Presets
-impl CliOutput {
+impl Log {
     pub fn banner() {
         let ascii_art = r#"
                             .__  .__  __          
@@ -53,53 +53,36 @@ impl CliOutput {
 }
 
 // Utilities
-impl CliOutput {
-    pub fn success(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}✅ {}", pad, message);
-    }
-
-    pub fn log(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
+impl Log {
+    pub fn log(message: impl Display, indent: Option<usize>) {
         let time_str = Utc::now().time().to_string();
         let time = &time_str[..13];
 
-        println!("{}[{}]: {}", pad, time.bright_black().bold(), message);
+        println!(
+            "{}[{}]: {}",
+            " ".repeat(indent.unwrap_or(0)),
+            time.bright_black().bold(),
+            message
+        );
     }
 
-    pub fn wrench(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}🔧 {}", pad, message);
+    pub fn info(message: impl Display, indent: Option<usize>) {
+        println!("{}ℹ️  {}", " ".repeat(indent.unwrap_or(0)), message);
+    }
+    pub fn wrench(message: impl Display, indent: Option<usize>) {
+        println!("{}🔧 {}", " ".repeat(indent.unwrap_or(0)), message);
     }
 
-    pub fn error(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        eprintln!("{}❌ {}", pad, message);
+    pub fn error(message: impl Display, indent: Option<usize>) {
+        eprintln!("{}❌ {}", " ".repeat(indent.unwrap_or(0)), message);
     }
-
-    pub fn warning(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}⚠️ {}", pad, message);
+    pub fn warning(message: impl Display, indent: Option<usize>) {
+        println!("{}⚠️ {}", " ".repeat(indent.unwrap_or(0)), message);
     }
-
-    pub fn info(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}ℹ️  {}", pad, message);
+    pub fn success(message: impl Display, indent: Option<usize>) {
+        println!("{}✅ {}", " ".repeat(indent.unwrap_or(0)), message);
     }
-
-    pub fn question(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}🤔 {}", pad, message);
-    }
-    pub fn cancelled(message: impl Display, padding_left: Option<usize>) {
-        let pad = " ".repeat(padding_left.unwrap_or(0));
-
-        println!("{}🚫 {}", pad, message);
+    pub fn question(message: impl Display, indent: Option<usize>) {
+        println!("{}🤔 {}", " ".repeat(indent.unwrap_or(0)), message);
     }
 }

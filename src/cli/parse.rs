@@ -1,70 +1,62 @@
-use crate::cli::types::{CliArguments, Command, FlagType};
-use crate::utils::output::CliOutput;
+use std::path::{Path, PathBuf};
+
+use super::types::{Args, Command};
+use crate::utils::Log;
+
+pub enum ParseArgsError {
+    InvalidArguments,
+    InvalidCommand(String),
+    InvalidPath(String),
+    InvalidPortNumber(String),
+}
 
 // Parse Function
-pub fn parse_args() -> Result<CliArguments, Box<dyn std::error::Error>> {
+pub fn parse_args() -> Result<Args, ParseArgsError> {
     // Get the arguments from the command line
-    let mut args = std::env::args().skip(1);
+    let args = std::env::args().skip(1).collect::<Vec<String>>();
 
-    // Look if the command is "serve" or "connect", otherwise return an error
-    let command: Command = match args.next().as_deref() {
-        Some("serve") => Command::Serve,
-        Some("connect") => Command::Connect,
-        _ => {
-            CliOutput::usage();
-            std::process::exit(0);
+    // Improper usage
+    if args.len() < 2 || args[0] == "-h" || args[0] == "--help" {
+        return Err(ParseArgsError::InvalidArguments);
+    }
+
+    // Get the command
+    let command = match args[0].as_str() {
+        "serve" => Command::Serve,
+        "connect" => Command::Connect,
+        _ => return Err(ParseArgsError::InvalidCommand(args[0].clone())),
+    };
+
+    // Get the path and validate it
+    let abs_workspace_path = match Path::new(&args[1]).canonicalize() {
+        Ok(mut canonical_workspace) => {
+            let canonical_str = canonical_workspace.to_string_lossy();
+            if canonical_str.starts_with(r"\\?\") {
+                canonical_workspace = PathBuf::from(&canonical_str[4..]);
+            }
+            canonical_workspace
+        }
+        Err(_) => {
+            return Err(ParseArgsError::InvalidPath(args[1].clone()));
         }
     };
 
-    // Look if the path is provided and validate it
-    let path: String = match args.next() {
-        Some(path) => path,
-        None => {
-            CliOutput::error("No path provided", None);
+    // Other arguments
+    let port = match args.get(2).unwrap_or(&"8080".to_string()).parse::<u16>() {
+        Ok(port) => port,
+        Err(_) => {
+            Log::error(
+                &format!("Invalid port number: '{}'", args.get(2).unwrap()),
+                None,
+            );
             std::process::exit(1);
         }
     };
-    if !std::path::Path::new(&path).is_dir() {
-        CliOutput::error(&format!("Path is not a directory: '{}'", path), None);
-        std::process::exit(1);
-    }
-
-    // Other arguments
-    let mut port = 8080;
-
-    // Look for flags
-    let mut pending_flag: Option<FlagType> = None;
-    for arg in args {
-        match pending_flag {
-            Some(FlagType::Port) => {
-                port = match arg.parse::<u16>() {
-                    Ok(port) => port,
-                    Err(_) => {
-                        CliOutput::error(&format!("Invalid port number: '{}'", arg), None);
-                        std::process::exit(1);
-                    }
-                };
-                pending_flag = None;
-                continue;
-            }
-            None => (),
-        }
-
-        match arg.as_str() {
-            "-p" | "--port" => {
-                pending_flag = Some(FlagType::Port);
-            }
-            _ => {
-                CliOutput::error(&format!("Unknown flag: '{}'", arg), None);
-                std::process::exit(1);
-            }
-        }
-    }
 
     // Return the arguments
-    Ok(CliArguments {
+    Ok(Args {
         command,
-        path,
+        abs_workspace_path,
         port,
     })
 }

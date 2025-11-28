@@ -1,6 +1,5 @@
-mod confirm;
 mod json;
-pub mod output;
+mod log;
 
-pub use confirm::confirm;
 pub use json::*;
+pub use log::Log;

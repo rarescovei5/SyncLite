@@ -63,7 +63,7 @@ async fn main() -> std::io::Result<()> {
     match command {
         Command::Serve => {
             let leader_id = generate_peer_id();
-            let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+            let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
             let listener = TcpListener::bind(addr).await?;
 
             // Initialize connection manager
@@ -278,6 +278,18 @@ async fn main() -> std::io::Result<()> {
                             }
                         }
                         // Broadcast the file updates to all peers
+                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
+                            Log::log(
+                                &format!(
+                                    "📡 Broadcasting {} files and {} deletions to peers",
+                                    files_to_update.len(),
+                                    paths_to_delete.len()
+                                )
+                                .blue(),
+                                None,
+                            );
+                        }
+
                         connection_manager
                             .broadcast_message(&ServerMessage::FileUpdatePush {
                                 files_to_write: files_to_update,
@@ -353,7 +365,8 @@ async fn main() -> std::io::Result<()> {
                                         sync_state: peer_sync_state,
                                     } => {
                                         Log::log(
-                                            &format!("Received version from {}", peer_id),
+                                            &format!("📥 Received initial sync from {}", peer_id)
+                                                .blue(),
                                             None,
                                         );
 
@@ -369,17 +382,25 @@ async fn main() -> std::io::Result<()> {
                                             &peer_sync_state,
                                         );
 
+                                        Log::log(
+                                            &format!(
+                                                "Sync result: {} to send, {} to receive, {} to delete locally, {} to delete remotely",
+                                                our_winning_files.len(),
+                                                their_winning_files.len(),
+                                                files_to_delete_from_server.len(),
+                                                files_to_delete_from_peer.len()
+                                            )
+                                            .blue(),
+                                            None,
+                                        );
+
                                         // Handle file deletions first
                                         if !files_to_delete_from_server.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
 
                                             for path in &files_to_delete_from_server {
                                                 Log::log(
-                                                    &format!(
-                                                        "Deleting workspace file: {} ({})",
-                                                        path, peer_id
-                                                    )
-                                                    .bright_red(),
+                                                    &format!("  🗑️  Deleting: {}", path).red(),
                                                     None,
                                                 );
                                             }
@@ -477,8 +498,10 @@ async fn main() -> std::io::Result<()> {
                                     } => {
                                         Log::log(
                                             &format!(
-                                                "Received file updates from peer: {}",
-                                                peer_id
+                                                "📥 Received from {}: {} files, {} deletions",
+                                                peer_id,
+                                                files_to_write.len(),
+                                                paths_to_delete.len()
                                             )
                                             .blue(),
                                             None,
@@ -489,8 +512,7 @@ async fn main() -> std::io::Result<()> {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for path in &paths_to_delete {
                                                 Log::log(
-                                                    &format!("Deleting path: {}", path)
-                                                        .bright_red(),
+                                                    &format!("  🗑️  Deleting: {}", path).red(),
                                                     None,
                                                 );
 
@@ -514,7 +536,7 @@ async fn main() -> std::io::Result<()> {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for (path, _) in &files_to_write {
                                                 Log::log(
-                                                    &format!("Writing workspace file: {}", path)
+                                                    &format!("  ✨ Creating/Updating: {}", path)
                                                         .green(),
                                                     None,
                                                 );
@@ -537,6 +559,15 @@ async fn main() -> std::io::Result<()> {
                                         // Small delay to ensure file watcher events are processed
                                         tokio::time::sleep(Duration::from_millis(100)).await;
                                         ignore_file_events.store(false, Ordering::Relaxed);
+
+                                        // Broadcast to other peers
+                                        if !files_to_write.is_empty() || !paths_to_delete.is_empty()
+                                        {
+                                            Log::log(
+                                                &format!("📡 Forwarding to other peers").blue(),
+                                                None,
+                                            );
+                                        }
 
                                         let failed_peers = connection_manager
                                             .broadcast_except(
@@ -598,7 +629,7 @@ async fn main() -> std::io::Result<()> {
             }
         }
         Command::Connect => {
-            let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+            let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
             let Ok(stream) = TcpStream::connect(addr).await else {
                 Log::error(&format!("Failed to connect to: {}", addr.to_string()), None);
                 std::process::exit(1);
@@ -850,6 +881,18 @@ async fn main() -> std::io::Result<()> {
                                 }
 
                                 // Send the file updates to the main connection handler via channel
+                                if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
+                                    Log::log(
+                                        &format!(
+                                            "📡 Sending to server: {} files, {} deletions",
+                                            files_to_update.len(),
+                                            paths_to_delete.len()
+                                        )
+                                        .blue(),
+                                        None,
+                                    );
+                                }
+
                                 let _ = file_change_tx
                                     .send(PeerMessage::FileUpdatePush {
                                         files_to_write: files_to_update,
@@ -888,13 +931,23 @@ async fn main() -> std::io::Result<()> {
                                         files_to_delete,
                                         files_to_send_back,
                                     } => {
+                                        Log::log(
+                                            &format!(
+                                                "📥 Initial sync response: {} to receive, {} to delete, {} to send",
+                                                files_to_update.len(),
+                                                files_to_delete.len(),
+                                                files_to_send_back.len()
+                                            )
+                                            .blue(),
+                                            None,
+                                        );
+
                                         // Handle file deletions first
                                         if !files_to_delete.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for path in &files_to_delete {
                                                 Log::log(
-                                                    &format!("Deleting workspace file: {}", path)
-                                                        .bright_red(),
+                                                    &format!("  🗑️  Deleting: {}", path).red(),
                                                     None,
                                                 );
                                             }
@@ -920,8 +973,7 @@ async fn main() -> std::io::Result<()> {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for (path, _) in &files_to_update {
                                                 Log::log(
-                                                    &format!("Creating workspace file: {}", path)
-                                                        .green(),
+                                                    &format!("  ✨ Creating/Updating: {}", path).green(),
                                                     None,
                                                 );
                                             }
@@ -970,6 +1022,11 @@ async fn main() -> std::io::Result<()> {
 
                                         // Send our winning files back to server
                                         if !our_winning_files.is_empty() {
+                                            Log::log(
+                                                &format!("📤 Sending {} files to server", our_winning_files.len())
+                                                    .blue(),
+                                                None,
+                                            );
                                             let message = PeerMessage::FileUpdatePush {
                                                 files_to_write: our_winning_files,
                                                 paths_to_delete: Vec::new(),
@@ -993,13 +1050,22 @@ async fn main() -> std::io::Result<()> {
                                         files_to_write,
                                         paths_to_delete,
                                     } => {
+                                        Log::log(
+                                            &format!(
+                                                "📥 Received from server: {} files, {} deletions",
+                                                files_to_write.len(),
+                                                paths_to_delete.len()
+                                            )
+                                            .blue(),
+                                            None,
+                                        );
+
                                         // Server is pushing updated files to us
                                         if !files_to_write.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for (path, _) in &files_to_write {
                                                 Log::log(
-                                                    &format!("Writing workspace file: {}", path)
-                                                        .green(),
+                                                    &format!("  ✨ Creating/Updating: {}", path).green(),
                                                     None,
                                                 );
                                             }
@@ -1026,8 +1092,7 @@ async fn main() -> std::io::Result<()> {
                                             ignore_file_events.store(true, Ordering::Relaxed);
                                             for path in &paths_to_delete {
                                                 Log::log(
-                                                    &format!("Deleting path: {}", path)
-                                                        .bright_red(),
+                                                    &format!("  🗑️  Deleting: {}", path).red(),
                                                     None,
                                                 );
 

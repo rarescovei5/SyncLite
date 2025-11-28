@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::sync::{calculate_file_hash, compute_sync_state, determine_winning_files};
+use crate::sync::{calculate_file_hash, compute_sync_state};
 use crate::utils::{read_json, write_json};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,29 +49,25 @@ impl SyncConfig {
         Ok(())
     }
     pub async fn patch(&self) -> Result<(), String> {
-        let workspace_path = self.storage_path.parent().unwrap();
+        {
+            let mut saved_state = self.state.lock().await;
+            let workspace_path = self.storage_path.parent().unwrap();
 
-        let mut computed_state: SyncState = HashMap::new();
-        compute_sync_state(workspace_path, workspace_path, &mut computed_state)?;
+            // This will include all the files that exist in the workspace including newly **Created** and **Modified** files
+            let mut computed_state: SyncState = HashMap::new();
+            compute_sync_state(workspace_path, workspace_path, &mut computed_state)?;
 
-        let (_, files_to_update, _, files_to_delete) =
-            determine_winning_files(&*self.state.lock().await, &computed_state);
+            for (path, file_entry) in &*saved_state {
+                // File existed before but doesn t know, it means it was **Deleted**
+                if computed_state.get(path).is_none() {
+                    computed_state.insert(path.clone(), file_entry.deleted());
+                }
+            }
 
-        for path in files_to_update {
-            self.add_file(
-                path,
-                FileEntry {
-                    hash: None,
-                    is_deleted: false,
-                    last_modified: Utc::now(),
-                },
-            )
-            .await?;
+            *saved_state = computed_state;
         }
 
-        for path in files_to_delete {
-            self.delete_file(&path).await?;
-        }
+        let _ = self.save().await;
 
         Ok(())
     }
@@ -240,7 +236,101 @@ impl SyncConfig {
         .await
     }
 
-    /// Delete multiple files from disk AND mark as deleted in sync state (batch unified operation)
+    /// Recursively mark files as deleted if they are inside the given directory
+    pub async fn delete_directory_recursive(&self, relative_dir_path: &str) -> Vec<String> {
+        let mut deleted_files = Vec::new();
+        {
+            let mut state = self.state.lock().await;
+
+            // Identify files that are children of this directory
+            for (path, entry) in state.iter_mut() {
+                if !entry.is_deleted
+                    && (path == relative_dir_path || path.starts_with(relative_dir_path))
+                {
+                    entry.is_deleted = true;
+                    entry.hash = None;
+                    entry.last_modified = Utc::now();
+                    deleted_files.push(path.clone());
+                }
+            }
+        }
+
+        // Auto-save if we modified anything
+        if !deleted_files.is_empty() {
+            let _ = self.save().await;
+        }
+
+        deleted_files
+    }
+
+    /// Recursively scan a directory and add all files to the sync state.
+    /// Returns a map of relative paths to file contents for broadcasting.
+    pub async fn scan_and_add_directory(
+        &self,
+        workspace_path: &Path,
+        relative_dir_path: &str,
+    ) -> HashMap<String, String> {
+        let mut new_files = HashMap::new();
+        let full_path = workspace_path.join(relative_dir_path);
+
+        // Helper to recursively find files
+        fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+            if dir.is_dir() {
+                for entry in fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_dir() {
+                        visit_dirs(&path, files)?;
+                    } else {
+                        files.push(path);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        let mut found_paths = Vec::new();
+        if let Err(e) = visit_dirs(&full_path, &mut found_paths) {
+            // Directory might have been deleted/moved quickly, ignore
+            return new_files;
+        }
+
+        // Batch update state
+        self.batch_operations(|state| {
+            for path in found_paths {
+                // Calculate relative path from workspace
+                let rel_path = match path.strip_prefix(workspace_path) {
+                    Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                    Err(_) => continue,
+                };
+
+                // Skip .synclite directory
+                if rel_path.contains(".synclite") {
+                    continue;
+                }
+
+                if let Ok(hash) = calculate_file_hash(&path) {
+                    state.insert(
+                        rel_path.clone(),
+                        FileEntry {
+                            hash: Some(hash),
+                            is_deleted: false,
+                            last_modified: Utc::now(),
+                        },
+                    );
+
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        new_files.insert(rel_path, content);
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|e| eprintln!("Failed to update sync state: {}", e));
+
+        new_files
+    }
+
     ///
     /// # Arguments
     /// * `fs` - FileSystem reference for sandboxed operations

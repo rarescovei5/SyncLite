@@ -51,9 +51,8 @@ async fn main() -> std::io::Result<()> {
     // Initialize sync_config, load the state from the storage directory
     // and patch with the the state of the physical filesystem
     let sync_config = Arc::new(SyncConfig::new(&abs_storage_path));
-    sync_config.load().await;
-    sync_config.patch().await;
-    sync_config.save().await;
+    sync_config.load().await.unwrap();
+    sync_config.patch().await.unwrap();
 
     // Initialize peers_config, load the state from the storage directory
     let peers_config = Arc::new(PeersConfig::new(
@@ -168,6 +167,24 @@ async fn main() -> std::io::Result<()> {
                             // Check actual file system state
                             let file_exists = path_buf.exists();
 
+                            // Handle Directory Logic
+                            if file_exists && path_buf.is_dir() {
+                                // Check if it's a Create event (which happens on directory move/copy)
+                                let has_create = event_kinds
+                                    .iter()
+                                    .any(|k| matches!(k, EventKind::Create(_)));
+
+                                if has_create {
+                                    // It's a directory creation/move! Scan it recursively.
+                                    let new_files = sync_config
+                                        .scan_and_add_directory(&abs_workspace_path, &relative_path)
+                                        .await;
+                                    files_to_update.extend(new_files);
+                                }
+                                // Skip regular processing for directories
+                                continue;
+                            }
+
                             // Analyze event history
                             let has_create = event_kinds
                                 .iter()
@@ -247,19 +264,13 @@ async fn main() -> std::io::Result<()> {
                                         fs::read_to_string(&path_buf).unwrap(),
                                     );
                                 }
-                                // File doesn't exist, saw Remove -> delete (includes temp files)
+                                // File doesn't exist, saw Remove -> delete (includes temp files), could also be a directory
                                 (false, _, true, _) => {
-                                    if let Err(e) = sync_config.delete_file(&relative_path).await {
-                                        Log::log(
-                                            &format!(
-                                                "Failed to delete file {}: {}",
-                                                relative_path, e
-                                            )
-                                            .red(),
-                                            None,
-                                        );
-                                    }
-                                    files_to_delete.push(relative_path.clone());
+                                    let deleted_files = sync_config
+                                        .delete_directory_recursive(&relative_path)
+                                        .await;
+
+                                    files_to_delete.extend(deleted_files);
                                 }
                                 // Any other case -> no action needed
                                 _ => {}
@@ -596,7 +607,7 @@ async fn main() -> std::io::Result<()> {
             match receive_message_from_peer::<ServerMessage>(&mut reader).await {
                 Ok(ServerMessage::ConnectionAck { peer_id, leader_id }) => {
                     // Separate connection logs from the rest of the logs for clarity
-                    println!("{}\n", "-=".repeat(40).black().bold());
+                    println!("\n{}\n", "-=".repeat(40).black().bold());
                     Log::wrench(&format!("Connected to: {}", addr.to_string()), None);
                     Log::info(&format!("Peer ID: {}", peer_id), None);
                     println!("\n{}\n", "-=".repeat(40).black().bold());
@@ -703,6 +714,7 @@ async fn main() -> std::io::Result<()> {
                                         continue;
                                     }
 
+                                    // Skip directories
                                     // Calculate relative path - skip if path is not within workspace
                                     let relative_path =
                                         match path_buf.strip_prefix(&abs_workspace_path) {
@@ -712,6 +724,27 @@ async fn main() -> std::io::Result<()> {
 
                                     // Check actual file system state
                                     let file_exists = path_buf.exists();
+
+                                    // Handle Directory Logic
+                                    if file_exists && path_buf.is_dir() {
+                                        // Check if it's a Create event
+                                        let has_create = event_kinds
+                                            .iter()
+                                            .any(|k| matches!(k, EventKind::Create(_)));
+
+                                        if has_create {
+                                            // It's a directory creation/move! Scan it recursively.
+                                            let new_files = sync_config
+                                                .scan_and_add_directory(
+                                                    &abs_workspace_path,
+                                                    &relative_path,
+                                                )
+                                                .await;
+                                            files_to_update.extend(new_files);
+                                        }
+                                        // Skip regular processing for directories
+                                        continue;
+                                    }
 
                                     // Analyze event history
                                     let has_create = event_kinds
@@ -801,19 +834,11 @@ async fn main() -> std::io::Result<()> {
                                         }
                                         // File doesn't exist, saw Remove -> delete (includes temp files)
                                         (false, _, true, _) => {
-                                            if let Err(e) =
-                                                sync_config.delete_file(&relative_path).await
-                                            {
-                                                Log::log(
-                                                    &format!(
-                                                        "Failed to delete file {}: {}",
-                                                        relative_path, e
-                                                    )
-                                                    .red(),
-                                                    None,
-                                                );
-                                            }
-                                            files_to_delete.push(relative_path.clone());
+                                            let deleted_files = sync_config
+                                                .delete_directory_recursive(&relative_path)
+                                                .await;
+
+                                            files_to_delete.extend(deleted_files);
                                         }
                                         // Any other case -> no action needed
                                         _ => {}

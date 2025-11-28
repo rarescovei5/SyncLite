@@ -1,61 +1,61 @@
 use crate::models::SyncState;
 
 /// This function returns a tuple of four vectors which mean the following:
-/// 1. The files that the peer needs to get from the server
-/// 2. The files that the server needs to get from the peer
-/// 3. The files that the server needs to delete from the peer
-/// 4. The files that the peer needs to delete from the server
+/// 1. The files that **sync_state_2** needs to get from the **sync_state_1**
+/// 2. The files that **sync_state_1** needs to get from the **sync_state_2**
+/// 3. The files that **sync_state_2** needs to delete from the **sync_state_1**
+/// 4. The files that **sync_state_1** needs to delete from the **sync_state_2**
 pub fn determine_winning_files(
-    server_sync_state: &SyncState,
-    peer_sync_state: &SyncState,
+    sync_state_1: &SyncState,
+    sync_state_2: &SyncState,
 ) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
-    let mut server_winning_files = Vec::new();
-    let mut peer_winning_files = Vec::new();
-    let mut files_to_delete_from_server = Vec::new();
-    let mut files_to_delete_from_peer = Vec::new();
+    let mut winning_files_1 = Vec::new();
+    let mut winning_files_2 = Vec::new();
+    let mut files_to_delete_from_1 = Vec::new();
+    let mut files_to_delete_from_2 = Vec::new();
 
     // Collect all unique file paths from both states
     let mut all_files = std::collections::HashSet::new();
-    for path in server_sync_state.keys() {
+    for path in sync_state_1.keys() {
         all_files.insert(path.clone());
     }
-    for path in peer_sync_state.keys() {
+    for path in sync_state_2.keys() {
         all_files.insert(path.clone());
     }
 
     for path in all_files {
-        match (server_sync_state.get(&path), peer_sync_state.get(&path)) {
-            (Some(server_file), Some(peer_file)) => {
+        match (sync_state_1.get(&path), sync_state_2.get(&path)) {
+            (Some(file_1), Some(file_2)) => {
                 // File exists in both states - apply last-writer-wins
-                if server_file.hash != peer_file.hash {
-                    if peer_file.last_modified > server_file.last_modified {
+                if file_1.hash != file_2.hash {
+                    if file_2.last_modified > file_1.last_modified {
                         // Peer wins
-                        if peer_file.is_deleted {
-                            files_to_delete_from_server.push(path);
+                        if file_2.is_deleted {
+                            files_to_delete_from_1.push(path);
                         } else {
-                            peer_winning_files.push(path);
+                            winning_files_2.push(path);
                         }
-                    } else if server_file.last_modified > peer_file.last_modified {
+                    } else if file_1.last_modified > file_2.last_modified {
                         // We win
-                        if server_file.is_deleted {
-                            files_to_delete_from_server.push(path);
+                        if file_1.is_deleted {
+                            files_to_delete_from_2.push(path);
                         } else {
-                            server_winning_files.push(path);
+                            winning_files_1.push(path);
                         }
                     }
                     // If timestamps are equal, no action needed (keep current state)
                 }
             }
-            (Some(server_file), None) => {
+            (Some(file_1), None) => {
                 // We have the file, peer doesn't - we win
-                if server_file.is_deleted {
-                    files_to_delete_from_peer.push(path);
+                if !file_1.is_deleted {
+                    winning_files_1.push(path);
                 }
             }
-            (None, Some(peer_file)) => {
+            (None, Some(file_2)) => {
                 // Peer has the file, we don't - peer wins
-                if peer_file.is_deleted {
-                    files_to_delete_from_server.push(path);
+                if !file_2.is_deleted {
+                    winning_files_2.push(path);
                 }
             }
             (None, None) => {
@@ -65,9 +65,9 @@ pub fn determine_winning_files(
     }
 
     (
-        server_winning_files,
-        peer_winning_files,
-        files_to_delete_from_server,
-        files_to_delete_from_peer,
+        winning_files_1,
+        winning_files_2,
+        files_to_delete_from_1,
+        files_to_delete_from_2,
     )
 }

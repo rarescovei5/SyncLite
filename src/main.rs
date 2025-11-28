@@ -146,7 +146,7 @@ async fn main() -> std::io::Result<()> {
                         }
 
                         let mut files_to_update: HashMap<String, String> = HashMap::new();
-                        let mut files_to_delete: Vec<String> = Vec::new();
+                        let mut paths_to_delete: Vec<String> = Vec::new();
 
                         // Now handle each file **once** based on event history and current state
                         for (path, event_kinds) in grouped {
@@ -264,13 +264,14 @@ async fn main() -> std::io::Result<()> {
                                         fs::read_to_string(&path_buf).unwrap(),
                                     );
                                 }
-                                // File doesn't exist, saw Remove -> delete (includes temp files), could also be a directory
+                                // File doesn't exist, saw Remove -> delete (could be file or directory)
                                 (false, _, true, _) => {
-                                    let deleted_files = sync_config
+                                    // Try recursive delete (handles both files and directories)
+                                    let _ = sync_config
                                         .delete_directory_recursive(&relative_path)
                                         .await;
 
-                                    files_to_delete.extend(deleted_files);
+                                    paths_to_delete.push(relative_path.clone());
                                 }
                                 // Any other case -> no action needed
                                 _ => {}
@@ -280,7 +281,7 @@ async fn main() -> std::io::Result<()> {
                         connection_manager
                             .broadcast_message(&ServerMessage::FileUpdatePush {
                                 files_to_write: files_to_update,
-                                files_to_delete: files_to_delete,
+                                paths_to_delete,
                             })
                             .await;
                     }
@@ -472,7 +473,7 @@ async fn main() -> std::io::Result<()> {
                                     }
                                     PeerMessage::FileUpdatePush {
                                         files_to_write,
-                                        files_to_delete,
+                                        paths_to_delete,
                                     } => {
                                         Log::log(
                                             &format!(
@@ -482,6 +483,32 @@ async fn main() -> std::io::Result<()> {
                                             .blue(),
                                             None,
                                         );
+
+                                        // Handle directory deletions
+                                        if !paths_to_delete.is_empty() {
+                                            ignore_file_events.store(true, Ordering::Relaxed);
+                                            for path in &paths_to_delete {
+                                                Log::log(
+                                                    &format!("Deleting path: {}", path)
+                                                        .bright_red(),
+                                                    None,
+                                                );
+
+                                                // Recursively delete files in this directory
+                                                let _ = sync_config
+                                                    .delete_directory_recursive(path)
+                                                    .await;
+
+                                                // Delete directory from filesystem
+                                                let path_buf =
+                                                    PathBuf::from(&abs_workspace_path).join(path);
+                                                if path_buf.is_dir() {
+                                                    let _ = fs::remove_dir_all(&path_buf);
+                                                } else {
+                                                    let _ = fs::remove_file(&path_buf);
+                                                }
+                                            }
+                                        }
 
                                         if !files_to_write.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
@@ -506,30 +533,6 @@ async fn main() -> std::io::Result<()> {
                                                 );
                                             }
                                         }
-                                        if !files_to_delete.is_empty() {
-                                            ignore_file_events.store(true, Ordering::Relaxed);
-                                            for path in &files_to_delete {
-                                                Log::log(
-                                                    &format!("Deleting workspace file: {}", path)
-                                                        .bright_red(),
-                                                    None,
-                                                );
-                                            }
-
-                                            if let Err(e) = sync_config
-                                                .sync_batch_delete_files(
-                                                    &abs_workspace_path,
-                                                    &files_to_delete,
-                                                    None,
-                                                )
-                                                .await
-                                            {
-                                                Log::log(
-                                                    &format!("Failed to delete files: {}", e).red(),
-                                                    None,
-                                                );
-                                            }
-                                        }
 
                                         // Small delay to ensure file watcher events are processed
                                         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -539,7 +542,7 @@ async fn main() -> std::io::Result<()> {
                                             .broadcast_except(
                                                 &ServerMessage::FileUpdatePush {
                                                     files_to_write: files_to_write.clone(),
-                                                    files_to_delete: files_to_delete.clone(),
+                                                    paths_to_delete,
                                                 },
                                                 vec![peer_id.clone()],
                                             )
@@ -702,7 +705,7 @@ async fn main() -> std::io::Result<()> {
                                 }
 
                                 let mut files_to_update: HashMap<String, String> = HashMap::new();
-                                let mut files_to_delete: Vec<String> = Vec::new();
+                                let mut paths_to_delete: Vec<String> = Vec::new();
 
                                 // Now handle each file **once** based on event history and current state
                                 for (path, event_kinds) in grouped {
@@ -776,39 +779,39 @@ async fn main() -> std::io::Result<()> {
                                                     );
                                                 }
                                             }
-                                            files_to_update.insert(
-                                                relative_path.clone(),
-                                                fs::read_to_string(&path_buf).unwrap(),
-                                            );
+                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                                files_to_update
+                                                    .insert(relative_path.clone(), content);
+                                            }
                                         }
                                         // File exists, saw Create but no Remove -> new file
                                         (true, true, false, _) => {
-                                            if let Err(e) = sync_config
-                                                .add_file(
-                                                    relative_path.clone(),
-                                                    FileEntry {
-                                                        hash: Some(
-                                                            calculate_file_hash(&path_buf).unwrap(),
-                                                        ),
-                                                        is_deleted: false,
-                                                        last_modified: Utc::now(),
-                                                    },
-                                                )
-                                                .await
-                                            {
-                                                Log::log(
-                                                    &format!(
-                                                        "Failed to add file {}: {}",
-                                                        relative_path, e
+                                            if let Ok(hash) = calculate_file_hash(&path_buf) {
+                                                if let Err(e) = sync_config
+                                                    .add_file(
+                                                        relative_path.clone(),
+                                                        FileEntry {
+                                                            hash: Some(hash),
+                                                            is_deleted: false,
+                                                            last_modified: Utc::now(),
+                                                        },
                                                     )
-                                                    .red(),
-                                                    None,
-                                                );
+                                                    .await
+                                                {
+                                                    Log::log(
+                                                        &format!(
+                                                            "Failed to add file {}: {}",
+                                                            relative_path, e
+                                                        )
+                                                        .red(),
+                                                        None,
+                                                    );
+                                                }
                                             }
-                                            files_to_update.insert(
-                                                relative_path.clone(),
-                                                fs::read_to_string(&path_buf).unwrap(),
-                                            );
+                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                                files_to_update
+                                                    .insert(relative_path.clone(), content);
+                                            }
                                         }
                                         // File exists, no Create event -> modification
                                         (true, false, _, true) => {
@@ -827,18 +830,19 @@ async fn main() -> std::io::Result<()> {
                                                     );
                                                 }
                                             }
-                                            files_to_update.insert(
-                                                relative_path.clone(),
-                                                fs::read_to_string(&path_buf).unwrap(),
-                                            );
+                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                                files_to_update
+                                                    .insert(relative_path.clone(), content);
+                                            }
                                         }
-                                        // File doesn't exist, saw Remove -> delete (includes temp files)
+                                        // File doesn't exist, saw Remove -> delete (could be file or directory)
                                         (false, _, true, _) => {
-                                            let deleted_files = sync_config
+                                            // Try recursive delete (handles both files and directories)
+                                            let _ = sync_config
                                                 .delete_directory_recursive(&relative_path)
                                                 .await;
 
-                                            files_to_delete.extend(deleted_files);
+                                            paths_to_delete.push(relative_path.clone());
                                         }
                                         // Any other case -> no action needed
                                         _ => {}
@@ -849,7 +853,7 @@ async fn main() -> std::io::Result<()> {
                                 let _ = file_change_tx
                                     .send(PeerMessage::FileUpdatePush {
                                         files_to_write: files_to_update,
-                                        files_to_delete: files_to_delete,
+                                        paths_to_delete,
                                     })
                                     .await;
                             }
@@ -968,7 +972,7 @@ async fn main() -> std::io::Result<()> {
                                         if !our_winning_files.is_empty() {
                                             let message = PeerMessage::FileUpdatePush {
                                                 files_to_write: our_winning_files,
-                                                files_to_delete: Vec::new(),
+                                                paths_to_delete: Vec::new(),
                                             };
                                             if let Err(e) =
                                                 send_message_to_peer(&mut writer, &message).await
@@ -987,7 +991,7 @@ async fn main() -> std::io::Result<()> {
 
                                     ServerMessage::FileUpdatePush {
                                         files_to_write,
-                                        files_to_delete,
+                                        paths_to_delete,
                                     } => {
                                         // Server is pushing updated files to us
                                         if !files_to_write.is_empty() {
@@ -1011,30 +1015,35 @@ async fn main() -> std::io::Result<()> {
                                                     &format!("Failed to write files: {}", e).red(),
                                                     None,
                                                 );
+
                                             }
+
                                         }
 
-                                        if !files_to_delete.is_empty() {
+
+                                       // Handle directory deletions
+                                       if !paths_to_delete.is_empty() {
                                             ignore_file_events.store(true, Ordering::Relaxed);
-                                            for path in &files_to_delete {
+                                            for path in &paths_to_delete {
                                                 Log::log(
-                                                    &format!("Deleting workspace file: {}", path)
+                                                    &format!("Deleting path: {}", path)
                                                         .bright_red(),
                                                     None,
                                                 );
-                                            }
-                                            if let Err(e) = sync_config
-                                                .sync_batch_delete_files(
-                                                    &abs_workspace_path,
-                                                    &files_to_delete,
-                                                    None,
-                                                )
-                                                .await
-                                            {
-                                                Log::log(
-                                                    &format!("Failed to delete files: {}", e).red(),
-                                                    None,
-                                                );
+
+                                                // Recursively delete files in this directory
+                                                let _ = sync_config
+                                                    .delete_directory_recursive(path)
+                                                    .await;
+
+                                                // Delete directory from filesystem
+                                                let path_buf =
+                                                    PathBuf::from(&abs_workspace_path).join(path);
+                                                if path_buf.is_dir() {
+                                                    let _ = fs::remove_dir_all(&path_buf);
+                                                } else {
+                                                    let _ = fs::remove_file(&path_buf);
+                                                }
                                             }
                                         }
 

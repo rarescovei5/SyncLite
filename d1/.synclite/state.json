@@ -1,0 +1,32 @@
+{
+  "ceva/tst/ceva.txt": {
+    "hash": "b5c4f91b8847fbd015fbaff179323a799985f5d2211f59bb1b53157bfbd3748d",
+    "is_deleted": false,
+    "last_modified": "2025-11-28T18:21:03.325254700Z"
+  },
+  "tst\\ceva.txt": {
+    "hash": null,
+    "is_deleted": true,
+    "last_modified": "2025-11-28T18:20:49.094515300Z"
+  },
+  "ceva.txt": {
+    "hash": null,
+    "is_deleted": true,
+    "last_modified": "2025-11-28T18:20:25.198634300Z"
+  },
+  "test/tst/ceva.txt": {
+    "hash": "b5c4f91b8847fbd015fbaff179323a799985f5d2211f59bb1b53157bfbd3748d",
+    "is_deleted": false,
+    "last_modified": "2025-11-28T18:21:12.306719800Z"
+  },
+  "test\\tst\\ceva.txt": {
+    "hash": null,
+    "is_deleted": true,
+    "last_modified": "2025-11-28T18:21:03.326411Z"
+  },
+  "ceva\\ceva.txt": {
+    "hash": "b5c4f91b8847fbd015fbaff179323a799985f5d2211f59bb1b53157bfbd3748d",
+    "is_deleted": false,
+    "last_modified": "2025-11-28T18:21:17.120811100Z"
+  }
+}

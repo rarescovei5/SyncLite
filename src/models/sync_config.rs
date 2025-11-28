@@ -290,7 +290,7 @@ impl SyncConfig {
         }
 
         let mut found_paths = Vec::new();
-        if let Err(e) = visit_dirs(&full_path, &mut found_paths) {
+        if let Err(_) = visit_dirs(&full_path, &mut found_paths) {
             // Directory might have been deleted/moved quickly, ignore
             return new_files;
         }

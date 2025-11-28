@@ -10,6 +10,8 @@ use std::{
     time::Duration,
 };
 
+use mdns_sd::{ServiceDaemon, ServiceInfo};
+
 use chrono::Utc;
 
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -81,6 +83,27 @@ async fn main() -> std::io::Result<()> {
             println!("\n{}\n", "-=".repeat(40).black().bold());
             Log::wrench(&format!("Listening on: {}", addr.to_string()), None);
             Log::info(&format!("Leader ID: {}", leader_id), None);
+
+            // Publish mDNS service
+            let mdns = ServiceDaemon::new().expect("Failed to create mDNS daemon");
+            let service_type = "_synclite._tcp.local.";
+            let instance_name = format!("SyncLite-{}", leader_id);
+            let host_name = format!("{}.local.", leader_id);
+            let my_ip = local_ip_address::local_ip().unwrap();
+            let service_info = ServiceInfo::new(
+                service_type,
+                &instance_name,
+                &host_name,
+                my_ip.to_string().as_str(),
+                port,
+                None,
+            )
+            .expect("valid service info");
+
+            mdns.register(service_info)
+                .expect("Failed to register mDNS service");
+            Log::info(&format!("Advertising service: {}", instance_name), None);
+
             println!("\n{}\n", "-=".repeat(40).black().bold());
 
             // ===== FILE WATCHER TASK (SERVER) =====
@@ -145,7 +168,7 @@ async fn main() -> std::io::Result<()> {
                             }
                         }
 
-                        let mut files_to_update: HashMap<String, String> = HashMap::new();
+                        let mut files_to_update: HashMap<String, Vec<u8>> = HashMap::new();
                         let mut paths_to_delete: Vec<String> = Vec::new();
 
                         // Now handle each file **once** based on event history and current state
@@ -170,9 +193,15 @@ async fn main() -> std::io::Result<()> {
                             // Handle Directory Logic
                             if file_exists && path_buf.is_dir() {
                                 // Check if it's a Create event (which happens on directory move/copy)
-                                let has_create = event_kinds
-                                    .iter()
-                                    .any(|k| matches!(k, EventKind::Create(_)));
+                                let has_create = event_kinds.iter().any(|k| {
+                                    matches!(k, EventKind::Create(_))
+                                        || matches!(
+                                            k,
+                                            EventKind::Modify(notify::event::ModifyKind::Name(
+                                                notify::event::RenameMode::To
+                                            ))
+                                        )
+                                });
 
                                 if has_create {
                                     // It's a directory creation/move! Scan it recursively.
@@ -189,9 +218,15 @@ async fn main() -> std::io::Result<()> {
                             let has_create = event_kinds
                                 .iter()
                                 .any(|k| matches!(k, EventKind::Create(_)));
-                            let has_remove = event_kinds
-                                .iter()
-                                .any(|k| matches!(k, EventKind::Remove(_)));
+                            let has_remove = event_kinds.iter().any(|k| {
+                                matches!(k, EventKind::Remove(_))
+                                    || matches!(
+                                        k,
+                                        EventKind::Modify(notify::event::ModifyKind::Name(
+                                            notify::event::RenameMode::From
+                                        ))
+                                    )
+                            });
                             let has_modify = event_kinds
                                 .iter()
                                 .any(|k| matches!(k, EventKind::Modify(_)));
@@ -216,7 +251,7 @@ async fn main() -> std::io::Result<()> {
                                     }
                                     files_to_update.insert(
                                         relative_path.clone(),
-                                        fs::read_to_string(&path_buf).unwrap(),
+                                        fs::read(&path_buf).unwrap(),
                                     );
                                 }
                                 // File exists, saw Create but no Remove -> new file
@@ -240,7 +275,7 @@ async fn main() -> std::io::Result<()> {
                                     }
                                     files_to_update.insert(
                                         relative_path.clone(),
-                                        fs::read_to_string(&path_buf).unwrap(),
+                                        fs::read(&path_buf).unwrap(),
                                     );
                                 }
                                 // File exists, no Create event -> modification
@@ -261,7 +296,7 @@ async fn main() -> std::io::Result<()> {
                                     }
                                     files_to_update.insert(
                                         relative_path.clone(),
-                                        fs::read_to_string(&path_buf).unwrap(),
+                                        fs::read(&path_buf).unwrap(),
                                     );
                                 }
                                 // File doesn't exist, saw Remove -> delete (could be file or directory)
@@ -290,12 +325,14 @@ async fn main() -> std::io::Result<()> {
                             );
                         }
 
-                        connection_manager
-                            .broadcast_message(&ServerMessage::FileUpdatePush {
-                                files_to_write: files_to_update,
-                                paths_to_delete,
-                            })
-                            .await;
+                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
+                            connection_manager
+                                .broadcast_message(&ServerMessage::FileUpdatePush {
+                                    files_to_write: files_to_update,
+                                    paths_to_delete,
+                                })
+                                .await;
+                        }
                     }
                 });
             }
@@ -430,11 +467,14 @@ async fn main() -> std::io::Result<()> {
                                             || !their_winning_files.is_empty()
                                         {
                                             // Read content of our winning files (paths are relative to workspace)
-                                            let mut my_winning_files_with_content = HashMap::new();
+                                            let mut my_winning_files_with_content: HashMap<
+                                                String,
+                                                Vec<u8>,
+                                            > = HashMap::new();
                                             for file_path in &our_winning_files {
                                                 // Convert relative path to absolute path for file operations
                                                 let full_path = abs_workspace_path.join(file_path);
-                                                match fs::read_to_string(&full_path) {
+                                                match fs::read(&full_path) {
                                                     Ok(content) => {
                                                         // Store with relative path as key
                                                         my_winning_files_with_content
@@ -629,8 +669,31 @@ async fn main() -> std::io::Result<()> {
             }
         }
         Command::Connect => {
-            let ip = local_ip_address::local_ip().unwrap();
-            let addr = SocketAddr::new(ip, port);
+            // Discover mDNS service
+            let mdns = ServiceDaemon::new().expect("Failed to create mDNS daemon");
+            let service_type = "_synclite._tcp.local.";
+            let receiver = mdns.browse(service_type).expect("Failed to browse");
+
+            Log::info("Browsing for SyncLite servers...", None);
+
+            let addr = loop {
+                match receiver.recv() {
+                    Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) => {
+                        Log::info(
+                            &format!("Resolved service: {}", info.get_fullname()).green(),
+                            None,
+                        );
+                        if let Some(ip) = info.get_addresses().iter().next() {
+                            let ip_addr: std::net::IpAddr = ip.to_string().parse().unwrap();
+                            let addr = SocketAddr::new(ip_addr, info.get_port());
+                            Log::info(&format!("Found server at: {}", addr).green(), None);
+                            break addr;
+                        }
+                    }
+                    _ => {}
+                }
+            };
+
             let Ok(stream) = TcpStream::connect(addr).await else {
                 Log::error(&format!("Failed to connect to: {}", addr.to_string()), None);
                 std::process::exit(1);
@@ -736,7 +799,7 @@ async fn main() -> std::io::Result<()> {
                                     }
                                 }
 
-                                let mut files_to_update: HashMap<String, String> = HashMap::new();
+                                let mut files_to_update: HashMap<String, Vec<u8>> = HashMap::new();
                                 let mut paths_to_delete: Vec<String> = Vec::new();
 
                                 // Now handle each file **once** based on event history and current state
@@ -763,9 +826,17 @@ async fn main() -> std::io::Result<()> {
                                     // Handle Directory Logic
                                     if file_exists && path_buf.is_dir() {
                                         // Check if it's a Create event
-                                        let has_create = event_kinds
-                                            .iter()
-                                            .any(|k| matches!(k, EventKind::Create(_)));
+                                        let has_create = event_kinds.iter().any(|k| {
+                                            matches!(k, EventKind::Create(_))
+                                                || matches!(
+                                                    k,
+                                                    EventKind::Modify(
+                                                        notify::event::ModifyKind::Name(
+                                                            notify::event::RenameMode::To
+                                                        )
+                                                    )
+                                                )
+                                        });
 
                                         if has_create {
                                             // It's a directory creation/move! Scan it recursively.
@@ -785,9 +856,15 @@ async fn main() -> std::io::Result<()> {
                                     let has_create = event_kinds
                                         .iter()
                                         .any(|k| matches!(k, EventKind::Create(_)));
-                                    let has_remove = event_kinds
-                                        .iter()
-                                        .any(|k| matches!(k, EventKind::Remove(_)));
+                                    let has_remove = event_kinds.iter().any(|k| {
+                                        matches!(k, EventKind::Remove(_))
+                                            || matches!(
+                                                k,
+                                                EventKind::Modify(notify::event::ModifyKind::Name(
+                                                    notify::event::RenameMode::From
+                                                ))
+                                            )
+                                    });
                                     let has_modify = event_kinds
                                         .iter()
                                         .any(|k| matches!(k, EventKind::Modify(_)));
@@ -811,7 +888,7 @@ async fn main() -> std::io::Result<()> {
                                                     );
                                                 }
                                             }
-                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                            if let Ok(content) = fs::read(&path_buf) {
                                                 files_to_update
                                                     .insert(relative_path.clone(), content);
                                             }
@@ -840,7 +917,7 @@ async fn main() -> std::io::Result<()> {
                                                     );
                                                 }
                                             }
-                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                            if let Ok(content) = fs::read(&path_buf) {
                                                 files_to_update
                                                     .insert(relative_path.clone(), content);
                                             }
@@ -862,7 +939,7 @@ async fn main() -> std::io::Result<()> {
                                                     );
                                                 }
                                             }
-                                            if let Ok(content) = fs::read_to_string(&path_buf) {
+                                            if let Ok(content) = fs::read(&path_buf) {
                                                 files_to_update
                                                     .insert(relative_path.clone(), content);
                                             }
@@ -894,12 +971,14 @@ async fn main() -> std::io::Result<()> {
                                     );
                                 }
 
-                                let _ = file_change_tx
-                                    .send(PeerMessage::FileUpdatePush {
-                                        files_to_write: files_to_update,
-                                        paths_to_delete,
-                                    })
-                                    .await;
+                                if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
+                                    let _ = file_change_tx
+                                        .send(PeerMessage::FileUpdatePush {
+                                            files_to_write: files_to_update,
+                                            paths_to_delete,
+                                        })
+                                        .await;
+                                }
                             }
                         });
                     }
@@ -998,12 +1077,12 @@ async fn main() -> std::io::Result<()> {
                                         tokio::time::sleep(Duration::from_millis(100)).await;
                                         ignore_file_events.store(false, Ordering::Relaxed);
 
-                                        let mut our_winning_files = HashMap::new();
+                                        let mut our_winning_files: HashMap<String, Vec<u8>> = HashMap::new();
                                         for path in files_to_send_back {
                                             // path is relative to workspace_path
                                             // Convert to absolute path for file operations
                                             let full_path = abs_workspace_path.join(&path);
-                                            match fs::read_to_string(&full_path) {
+                                            match fs::read(&full_path) {
                                                 Ok(content) => {
                                                     // Store with relative path as key
                                                     our_winning_files.insert(path, content);

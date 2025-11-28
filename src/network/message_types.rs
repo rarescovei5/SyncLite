@@ -14,7 +14,7 @@ pub enum ServerMessage {
     },
     // Step 3: Server sends the files to update and the files to delete and requests files it needs from the peer
     InitialSyncPushResponse {
-        files_to_update: HashMap<String, String>,
+        files_to_update: HashMap<String, Vec<u8>>,
         files_to_delete: Vec<String>,
         files_to_send_back: Vec<String>,
     },
@@ -24,7 +24,7 @@ pub enum ServerMessage {
         peers: Vec<String>,
     },
     FileUpdatePush {
-        files_to_write: HashMap<String, String>,
+        files_to_write: HashMap<String, Vec<u8>>,
         paths_to_delete: Vec<String>,
     },
 }
@@ -39,7 +39,7 @@ pub enum PeerMessage {
 
     // step 4: Peer sends the files back to the server and initial sync is complete
     FileUpdatePush {
-        files_to_write: HashMap<String, String>,
+        files_to_write: HashMap<String, Vec<u8>>,
         paths_to_delete: Vec<String>,
     },
 }

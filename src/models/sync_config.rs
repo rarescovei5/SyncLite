@@ -151,7 +151,7 @@ impl SyncConfig {
         &self,
         workspace_path: &Path,
         relative_path: &str,
-        content: &str,
+        content: &[u8],
     ) -> Result<(), String> {
         let full_path = workspace_path.join(relative_path);
 
@@ -199,7 +199,7 @@ impl SyncConfig {
     pub async fn sync_batch_write_files(
         &self,
         workspace_path: &Path,
-        files: &HashMap<String, String>,
+        files: &HashMap<String, Vec<u8>>,
     ) -> Result<(), String> {
         // Write all files to filesystem first
         for (relative_path, content) in files {
@@ -269,7 +269,7 @@ impl SyncConfig {
         &self,
         workspace_path: &Path,
         relative_dir_path: &str,
-    ) -> HashMap<String, String> {
+    ) -> HashMap<String, Vec<u8>> {
         let mut new_files = HashMap::new();
         let full_path = workspace_path.join(relative_dir_path);
 
@@ -319,7 +319,7 @@ impl SyncConfig {
                         },
                     );
 
-                    if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(content) = fs::read(&path) {
                         new_files.insert(rel_path, content);
                     }
                 }

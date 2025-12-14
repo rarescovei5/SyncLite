@@ -12,7 +12,7 @@ pub fn handle_parse_args() -> Args {
         Err(e) => {
             match e {
                 ParseArgsError::InvalidArguments => {
-                    Log::error("Invalid arguments", None);
+                    Log::usage();
                 }
                 ParseArgsError::InvalidCommand(command) => {
                     Log::error(&format!("Invalid command: {}", command), None);

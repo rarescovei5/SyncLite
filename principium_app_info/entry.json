@@ -1,0 +1,7 @@
+{
+  "name": "SyncLite",
+  "description": "Real-time peer-to-peer folder sync for your local network (LAN) from the command line—sync changes instantly over TCP with multi-peer support, SHA-256 integrity checks, and proper delete tracking.",
+  "author": "principium",
+  "category": "Networking",
+  "type": "cli"
+}

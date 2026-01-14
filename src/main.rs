@@ -1,18 +1,10 @@
+mod file_watcher;
+
 use std::{
-    collections::HashMap,
-    fs,
     net::SocketAddr,
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+    sync::{Arc, atomic::AtomicBool},
 };
-
-use chrono::Utc;
-
-use notify::{EventKind, RecursiveMode, Watcher};
 
 use p2p::{ConnectionManager, receive_message_from_peer, send_message_to_peer};
 use tokio::{
@@ -21,7 +13,6 @@ use tokio::{
 };
 
 use colored::Colorize;
-use common::fs::calculate_file_hash;
 use log::{elog, log};
 
 use synclite::network::{
@@ -31,10 +22,6 @@ use synclite::network::{
         handlers::{peer, server},
     },
     peer_registry::{acknowledge_peer, broadcast_peer_list},
-};
-use workspace::{
-    WORKSPACE_DIR,
-    sync::{FileEntry, determine_winning_files},
 };
 
 #[tokio::main]
@@ -100,223 +87,13 @@ async fn main() -> anyhow::Result<()> {
             println!("\n{}\n", "-=".repeat(40).black().bold());
 
             // ===== FILE WATCHER TASK (SERVER) =====
-            // Spawn a background task to watch the workspace directory for changes
-            // This runs independently of the connection handling
-            {
-                let sync_manager = Arc::clone(&sync_manager);
-                let connection_manager = Arc::clone(&connection_manager);
-                let ignore_file_events = Arc::clone(&ignore_file_events);
-
-                tokio::spawn(async move {
-                    // Create a tokio channel for async communication
-                    let (tx, mut rx) = mpsc::channel::<notify::Event>(100);
-
-                    // Create a custom event handler that sends to the tokio channel
-                    let event_handler = move |res: notify::Result<notify::Event>| {
-                        if let Ok(event) = res {
-                            // Use blocking_send since notify runs in sync context
-                            let _ = tx.blocking_send(event);
-                        }
-                    };
-
-                    // Create watcher with our custom event handler
-                    let mut watcher = notify::recommended_watcher(event_handler).unwrap();
-                    watcher
-                        .watch(&*WORKSPACE_DIR, RecursiveMode::Recursive)
-                        .unwrap();
-
-                    // Loop to handle file system events
-                    loop {
-                        // First event in a burst
-                        let Some(first_event) = rx.recv().await else {
-                            continue;
-                        };
-
-                        // Skip processing if we're currently making programmatic changes
-                        if ignore_file_events.load(Ordering::Relaxed) {
-                            continue;
-                        }
-
-                        // Wait to absorb additional events
-                        tokio::time::sleep(Duration::from_millis(150)).await;
-
-                        // Collect all events that arrived during/after the sleep
-                        let mut events = vec![first_event];
-                        while let Ok(event) = rx.try_recv() {
-                            events.push(event);
-                        }
-
-                        // Group by file path, collecting ALL event kinds for each path
-                        let mut grouped: HashMap<String, Vec<EventKind>> = HashMap::new();
-
-                        for event in events {
-                            for path in event.paths {
-                                if let Some(p) = path.to_str() {
-                                    grouped
-                                        .entry(p.to_string())
-                                        .or_insert_with(Vec::new)
-                                        .push(event.kind.clone());
-                                }
-                            }
-                        }
-
-                        let mut files_to_update: HashMap<String, Vec<u8>> = HashMap::new();
-                        let mut paths_to_delete: Vec<String> = Vec::new();
-
-                        // Now handle each file **once** based on event history and current state
-                        for (path, event_kinds) in grouped {
-                            let path_buf = PathBuf::from(&path);
-
-                            // Skip .synclite directory
-                            let is_synclite_dir = path.contains(".synclite");
-                            if is_synclite_dir {
-                                continue;
-                            }
-
-                            // Calculate relative path - skip if path is not within workspace
-                            let relative_path = match path_buf.strip_prefix(&*WORKSPACE_DIR) {
-                                Ok(rel) => rel.to_str().unwrap().to_string(),
-                                Err(_) => continue, // Path not within workspace
-                            };
-
-                            // Check actual file system state
-                            let file_exists = path_buf.exists();
-
-                            // Handle Directory Logic
-                            if file_exists && path_buf.is_dir() {
-                                // Check if it's a Create event (which happens on directory move/copy)
-                                let has_create = event_kinds.iter().any(|k| {
-                                    matches!(k, EventKind::Create(_))
-                                        || matches!(
-                                            k,
-                                            EventKind::Modify(notify::event::ModifyKind::Name(
-                                                notify::event::RenameMode::To
-                                            ))
-                                        )
-                                });
-
-                                if has_create {
-                                    // It's a directory creation/move! Scan it recursively.
-                                    let new_files = sync_manager
-                                        .scan_and_add_directory(&*WORKSPACE_DIR, &relative_path)
-                                        .await;
-                                    files_to_update.extend(new_files);
-                                }
-                                // Skip regular processing for directories
-                                continue;
-                            }
-
-                            // Analyze event history
-                            let has_create = event_kinds
-                                .iter()
-                                .any(|k| matches!(k, EventKind::Create(_)));
-                            let has_remove = event_kinds.iter().any(|k| {
-                                matches!(k, EventKind::Remove(_))
-                                    || matches!(
-                                        k,
-                                        EventKind::Modify(notify::event::ModifyKind::Name(
-                                            notify::event::RenameMode::From
-                                        ))
-                                    )
-                            });
-                            let has_modify = event_kinds
-                                .iter()
-                                .any(|k| matches!(k, EventKind::Modify(_)));
-
-                            // Determine action based on event history and current state
-                            match (file_exists, has_create, has_remove, has_modify) {
-                                // File exists, saw both Create and Remove -> atomic write, treat as modify
-                                (true, true, true, _) => {
-                                    if let Ok(hash) = calculate_file_hash(&path_buf) {
-                                        if let Err(e) =
-                                            sync_manager.update_file(&relative_path, hash).await
-                                        {
-                                            elog!(
-                                                log,
-                                                "Failed to update file {}: {}",
-                                                relative_path,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    files_to_update.insert(
-                                        relative_path.clone(),
-                                        fs::read(&path_buf).unwrap(),
-                                    );
-                                }
-                                // File exists, saw Create but no Remove -> new file
-                                (true, true, false, _) => {
-                                    if let Err(e) = sync_manager
-                                        .add_file(
-                                            relative_path.clone(),
-                                            FileEntry {
-                                                hash: Some(calculate_file_hash(&path_buf).unwrap()),
-                                                is_deleted: false,
-                                                last_modified: Utc::now(),
-                                            },
-                                        )
-                                        .await
-                                    {
-                                        elog!(log, "Failed to add file {}: {}", relative_path, e);
-                                    }
-                                    files_to_update.insert(
-                                        relative_path.clone(),
-                                        fs::read(&path_buf).unwrap(),
-                                    );
-                                }
-                                // File exists, no Create event -> modification
-                                (true, false, _, true) => {
-                                    if let Ok(hash) = calculate_file_hash(&path_buf) {
-                                        if let Err(e) =
-                                            sync_manager.update_file(&relative_path, hash).await
-                                        {
-                                            elog!(
-                                                log,
-                                                "Failed to update file {}: {}",
-                                                relative_path,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    files_to_update.insert(
-                                        relative_path.clone(),
-                                        fs::read(&path_buf).unwrap(),
-                                    );
-                                }
-                                // File doesn't exist, saw Remove -> delete (could be file or directory)
-                                (false, _, true, _) => {
-                                    // Try recursive delete (handles both files and directories)
-                                    let _ = sync_manager
-                                        .delete_directory_recursive(&relative_path)
-                                        .await;
-
-                                    paths_to_delete.push(relative_path.clone());
-                                }
-                                // Any other case -> no action needed
-                                _ => {}
-                            }
-                        }
-                        // Broadcast the file updates to all peers
-                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
-                            log!(
-                                log,
-                                "📡 Broadcasting {} files and {} deletions to peers",
-                                files_to_update.len(),
-                                paths_to_delete.len()
-                            );
-                        }
-
-                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
-                            connection_manager
-                                .broadcast_message(&ServerMessage::FileUpdatePush {
-                                    files_to_write: files_to_update,
-                                    paths_to_delete,
-                                })
-                                .await;
-                        }
-                    }
-                });
-            }
+            let _server_watcher = file_watcher::spawn_file_watcher(
+                file_watcher::WatcherMode::Server {
+                    connection_manager: Arc::clone(&connection_manager),
+                },
+                Arc::clone(&sync_manager),
+                Arc::clone(&ignore_file_events),
+            );
 
             // ===== CONNECTION HANDLER (SERVER) =====
             while let Ok((stream, peer_addr)) = listener.accept().await {
@@ -503,226 +280,11 @@ async fn main() -> anyhow::Result<()> {
             // Create a channel for the file watcher to send messages to the main connection handler
             let (file_change_tx, mut file_change_rx) = mpsc::channel::<PeerMessage>(100);
 
-            {
-                let sync_manager = Arc::clone(&sync_manager);
-                let ignore_file_events = Arc::clone(&ignore_file_events);
-
-                tokio::spawn(async move {
-                    // Create a tokio channel for async communication
-                    let (tx, mut rx) = mpsc::channel::<notify::Event>(100);
-
-                    // Create a custom event handler that sends to the tokio channel
-                    let event_handler = move |res: notify::Result<notify::Event>| {
-                        if let Ok(event) = res {
-                            // Use blocking_send since notify runs in sync context
-                            let _ = tx.blocking_send(event);
-                        }
-                    };
-
-                    // Create watcher with our custom event handler
-                    let mut watcher = notify::recommended_watcher(event_handler).unwrap();
-                    watcher
-                        .watch(&*WORKSPACE_DIR, RecursiveMode::Recursive)
-                        .unwrap();
-
-                    // Loop to handle file system events
-                    loop {
-                        // First event in a burst
-                        let Some(first_event) = rx.recv().await else {
-                            continue;
-                        };
-
-                        // Skip processing if we're currently making programmatic changes
-                        if ignore_file_events.load(Ordering::Relaxed) {
-                            continue;
-                        }
-
-                        // Wait to absorb additional events
-                        tokio::time::sleep(Duration::from_millis(150)).await;
-
-                        // Collect all events that arrived during/after the sleep
-                        let mut events = vec![first_event];
-                        while let Ok(event) = rx.try_recv() {
-                            events.push(event);
-                        }
-
-                        // Group by file path, collecting ALL event kinds for each path
-                        let mut grouped: HashMap<String, Vec<EventKind>> = HashMap::new();
-
-                        for event in events {
-                            for path in event.paths {
-                                if let Some(p) = path.to_str() {
-                                    grouped
-                                        .entry(p.to_string())
-                                        .or_insert_with(Vec::new)
-                                        .push(event.kind.clone());
-                                }
-                            }
-                        }
-
-                        let mut files_to_update: HashMap<String, Vec<u8>> = HashMap::new();
-                        let mut paths_to_delete: Vec<String> = Vec::new();
-
-                        // Now handle each file **once** based on event history and current state
-                        for (path, event_kinds) in grouped {
-                            let path_buf = PathBuf::from(&path);
-
-                            // Skip .synclite directory
-                            let is_synclite_dir = path.contains(".synclite");
-                            if is_synclite_dir {
-                                continue;
-                            }
-
-                            // Skip directories
-                            // Calculate relative path - skip if path is not within workspace
-                            let relative_path = match path_buf.strip_prefix(&*WORKSPACE_DIR) {
-                                Ok(rel) => rel.to_str().unwrap().to_string(),
-                                Err(_) => continue, // Path not within workspace
-                            };
-
-                            // Check actual file system state
-                            let file_exists = path_buf.exists();
-
-                            // Handle Directory Logic
-                            if file_exists && path_buf.is_dir() {
-                                // Check if it's a Create event
-                                let has_create = event_kinds.iter().any(|k| {
-                                    matches!(k, EventKind::Create(_))
-                                        || matches!(
-                                            k,
-                                            EventKind::Modify(notify::event::ModifyKind::Name(
-                                                notify::event::RenameMode::To
-                                            ))
-                                        )
-                                });
-
-                                if has_create {
-                                    // It's a directory creation/move! Scan it recursively.
-                                    let new_files = sync_manager
-                                        .scan_and_add_directory(&*WORKSPACE_DIR, &relative_path)
-                                        .await;
-                                    files_to_update.extend(new_files);
-                                }
-                                // Skip regular processing for directories
-                                continue;
-                            }
-
-                            // Analyze event history
-                            let has_create = event_kinds
-                                .iter()
-                                .any(|k| matches!(k, EventKind::Create(_)));
-                            let has_remove = event_kinds.iter().any(|k| {
-                                matches!(k, EventKind::Remove(_))
-                                    || matches!(
-                                        k,
-                                        EventKind::Modify(notify::event::ModifyKind::Name(
-                                            notify::event::RenameMode::From
-                                        ))
-                                    )
-                            });
-                            let has_modify = event_kinds
-                                .iter()
-                                .any(|k| matches!(k, EventKind::Modify(_)));
-
-                            // Determine action based on event history and current state
-                            match (file_exists, has_create, has_remove, has_modify) {
-                                // File exists, saw both Create and Remove -> atomic write, treat as modify
-                                (true, true, true, _) => {
-                                    if let Ok(hash) = calculate_file_hash(&path_buf) {
-                                        if let Err(e) =
-                                            sync_manager.update_file(&relative_path, hash).await
-                                        {
-                                            elog!(
-                                                log,
-                                                "Failed to update file {}: {}",
-                                                relative_path,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    if let Ok(content) = fs::read(&path_buf) {
-                                        files_to_update.insert(relative_path.clone(), content);
-                                    }
-                                }
-                                // File exists, saw Create but no Remove -> new file
-                                (true, true, false, _) => {
-                                    if let Ok(hash) = calculate_file_hash(&path_buf) {
-                                        if let Err(e) = sync_manager
-                                            .add_file(
-                                                relative_path.clone(),
-                                                FileEntry {
-                                                    hash: Some(hash),
-                                                    is_deleted: false,
-                                                    last_modified: Utc::now(),
-                                                },
-                                            )
-                                            .await
-                                        {
-                                            elog!(
-                                                log,
-                                                "Failed to add file {}: {}",
-                                                relative_path,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    if let Ok(content) = fs::read(&path_buf) {
-                                        files_to_update.insert(relative_path.clone(), content);
-                                    }
-                                }
-                                // File exists, no Create event -> modification
-                                (true, false, _, true) => {
-                                    if let Ok(hash) = calculate_file_hash(&path_buf) {
-                                        if let Err(e) =
-                                            sync_manager.update_file(&relative_path, hash).await
-                                        {
-                                            elog!(
-                                                log,
-                                                "Failed to update file {}: {}",
-                                                relative_path,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    if let Ok(content) = fs::read(&path_buf) {
-                                        files_to_update.insert(relative_path.clone(), content);
-                                    }
-                                }
-                                // File doesn't exist, saw Remove -> delete (could be file or directory)
-                                (false, _, true, _) => {
-                                    // Try recursive delete (handles both files and directories)
-                                    let _ = sync_manager
-                                        .delete_directory_recursive(&relative_path)
-                                        .await;
-
-                                    paths_to_delete.push(relative_path.clone());
-                                }
-                                // Any other case -> no action needed
-                                _ => {}
-                            }
-                        }
-
-                        // Send the file updates to the main connection handler via channel
-                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
-                            log!(
-                                log,
-                                "📡 Sending to server: {} files, {} deletions",
-                                files_to_update.len(),
-                                paths_to_delete.len()
-                            );
-                        }
-
-                        if !files_to_update.is_empty() || !paths_to_delete.is_empty() {
-                            let _ = file_change_tx
-                                .send(PeerMessage::FileUpdatePush {
-                                    files_to_write: files_to_update,
-                                    paths_to_delete,
-                                })
-                                .await;
-                        }
-                    }
-                });
-            }
+            let _peer_watcher = file_watcher::spawn_file_watcher(
+                file_watcher::WatcherMode::Peer { file_change_tx },
+                Arc::clone(&sync_manager),
+                Arc::clone(&ignore_file_events),
+            );
 
             // ===== MESSAGE HANDLER (PEER) =====
             // Listen for messages from the server AND file watcher changes

@@ -3,19 +3,54 @@ name = "synclite"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-tokio = { version = "1.48.0", features = ["full"] }
-colored = "3.0.0"
-indicatif = "0.18.3"
-uuid = {version = "1.15.0", features = ["v4", "serde"]}
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+# Workspace
+log = { path = "crates/log" }
+common = { path = "crates/common" }
+app = { path = "crates/app" }
+workspace = { path = "crates/workspace" }
+p2p = { path = "crates/p2p" }
+# General
+tokio = { version = "1.49.0", features = ["full"] }
+uuid = {version = "1.19.0", features = ["v4", "serde"]}
 chrono = { version = "0.4.30", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10.9"
+serde_json = "1.0.149"
 dirs = "6.0"
+anyhow = "1.0.100"
+colored = "3.0.0"
+# Files
 notify = "8.2.0"
-local-ip-address = "0.6.5"
-mdns-sd = "0.17.0"
+# Network
+local-ip-address = "0.6.8"
+mdns-sd = "0.17.1"
+# Cli
+dsl_cli = "0.2.0"
 
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["fileapi", "winnt"] }
+
+[dependencies]
+# Workspace
+log = { path = "crates/log" }
+common = { path = "crates/common" }
+app = { path = "crates/app" }
+workspace = { path = "crates/workspace" }
+p2p = { path = "crates/p2p" }
+# General
+anyhow = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+colored = { workspace = true }
+# Files
+notify = { workspace = true }
+# Network
+mdns-sd = { workspace = true }
+local-ip-address = { workspace = true }
+# Cli
+dsl_cli = { workspace = true }

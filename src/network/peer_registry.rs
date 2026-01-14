@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::{
-    network::{PeerConnectionManager, ServerMessage},
-    utils::Log,
-};
+use log::log;
+use p2p::ConnectionManager;
+
+use crate::network::messages::ServerMessage;
 
 /// Acknowledges a peer connection and registers it in the system
 /// Saves the peer to the connection manager and the peers config
 pub async fn acknowledge_peer(
-    connection_manager: Arc<PeerConnectionManager>,
+    connection_manager: Arc<ConnectionManager>,
     peer_id: String,
     leader_id: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -26,18 +26,16 @@ pub async fn acknowledge_peer(
 }
 
 pub async fn broadcast_peer_list(
-    connection_manager: Arc<PeerConnectionManager>,
+    connection_manager: Arc<ConnectionManager>,
     peers: Vec<String>,
 ) -> Result<(), Vec<String>> {
     let peers_changed_message = ServerMessage::PeerListUpdate { peers };
 
     // Broadcast to all existing peers (except the new one)
-    Log::log(
-        &format!(
-            "Notifying {} existing peers about new peer list update.",
-            connection_manager.connection_count().await,
-        ),
-        None,
+    log!(
+        log,
+        "Notifying {} existing peers about new peer list update.",
+        connection_manager.connection_count().await
     );
 
     let failed_peers = connection_manager

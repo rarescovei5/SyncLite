@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    STORAGE_DIR, WORKSPACE_DIR,
+    WORKSPACE_DIR,
     sync::{FileEntry, STATE_PATH},
 };
 use common::{fs::calculate_file_hash, json::read_json};

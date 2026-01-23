@@ -8,10 +8,7 @@ use std::{
 use chrono::Utc;
 use tokio::sync::Mutex;
 
-use crate::{
-    STORAGE_DIR,
-    sync::{FileEntry, STATE_PATH, SyncState},
-};
+use crate::sync::{FileEntry, STATE_PATH, SyncState};
 use common::{fs::calculate_file_hash, json::write_json};
 
 pub struct SyncManager(pub Arc<Mutex<SyncState>>);

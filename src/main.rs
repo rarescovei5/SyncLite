@@ -24,6 +24,25 @@ use synclite::network::{
     peer_registry::{acknowledge_peer, broadcast_peer_list},
 };
 
+dsl_cli::cli! {
+    name "SyncLite",
+    version "0.1.0",
+    description "Real-time peer-to-peer folder sync for your local network (LAN) from the command line—sync changes instantly over TCP with multi-peer support, SHA-256 integrity checks, and proper delete tracking.",
+
+    cmd serve "Start a server that watches a directory and allows peers to connect." {
+        arg workspace "The workspace directory to serve.": Option<PathBuf> = ".",
+        opt "-p, --port" "The port to serve on." {
+            arg number: u16 = 8080,
+        }
+    }
+    cmd connect "Connect to a server and keep your directory in sync." {
+        arg workspace "The workspace directory to connect to.": Option<PathBuf> = ".",
+        opt "-p, --port" "The port to connect to." {
+            arg number: u16 = 8080,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let ascii_art = r#"
@@ -36,24 +55,7 @@ async fn main() -> anyhow::Result<()> {
 "#;
     println!("{}", ascii_art.bright_yellow().bold());
 
-    dsl_cli::cli! {
-        name "SyncLite",
-        version "0.1.0",
-        description "Real-time peer-to-peer folder sync for your local network (LAN) from the command line—sync changes instantly over TCP with multi-peer support, SHA-256 integrity checks, and proper delete tracking.",
-
-        cmd serve "Start a server that watches a directory and allows peers to connect." {
-            arg workspace "The workspace directory to serve.": Option<PathBuf> = ".",
-            opt "-p, --port" "The port to serve on." {
-                arg number: u16 = 8080,
-            }
-        }
-        cmd connect "Connect to a server and keep your directory in sync." {
-            arg workspace "The workspace directory to connect to.": Option<PathBuf> = ".",
-            opt "-p, --port" "The port to connect to." {
-                arg number: u16 = 8080,
-            }
-        }
-    }
+    let parsed = parse_env(std::env::args().skip(1).collect());
 
     // Logic
     match parsed {

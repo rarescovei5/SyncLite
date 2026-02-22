@@ -30,13 +30,13 @@ dsl_cli::cli! {
     description "Real-time peer-to-peer folder sync for your local network (LAN) from the command line—sync changes instantly over TCP with multi-peer support, SHA-256 integrity checks, and proper delete tracking.",
 
     cmd serve "Start a server that watches a directory and allows peers to connect." {
-        arg workspace "The workspace directory to serve.": Option<PathBuf> = ".",
+        arg workspace "The workspace directory to serve.": Option<PathBuf> = PathBuf::from("."),
         opt "-p, --port" "The port to serve on." {
             arg number: u16 = 8080,
         }
     }
     cmd connect "Connect to a server and keep your directory in sync." {
-        arg workspace "The workspace directory to connect to.": Option<PathBuf> = ".",
+        arg workspace "The workspace directory to connect to.": Option<PathBuf> = PathBuf::from("."),
         opt "-p, --port" "The port to connect to." {
             arg number: u16 = 8080,
         }

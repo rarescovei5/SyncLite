@@ -247,9 +247,9 @@ dependencies = [
 
 [[package]]
 name = "dsl_cli"
-version = "0.3.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb035da615b0061f4d6654fcf495e90853786a401afc3c7f99ca2534cd635b50"
+checksum = "6801d29036d059867eeb53d46ec12feeebdae4540ef722df6244d6d089cf73b8"
 dependencies = [
  "dsl_cli_core",
  "dsl_cli_macro",
@@ -257,15 +257,15 @@ dependencies = [
 
 [[package]]
 name = "dsl_cli_core"
-version = "0.3.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c476e2ff647e3c02884b1a556c9e9fcb405247113bb180fdfe394a4ecc60c57"
+checksum = "23bd2994ce9c25393eb2d7b885ede40497149024f51f7d525d3a34cf9321a3e2"
 
 [[package]]
 name = "dsl_cli_macro"
-version = "0.3.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad0a96237d855f2deba1c0d6e08687baf5360663e277838a50cb3d2f47d74851"
+checksum = "07dcb9be78a1f372247049b2e5dfc3b6b4f8f2570039ee284358951b9b8b8ffd"
 dependencies = [
  "proc-macro2",
  "quote",
